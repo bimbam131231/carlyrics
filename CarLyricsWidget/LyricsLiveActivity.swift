@@ -2,71 +2,119 @@ import ActivityKit
 import SwiftUI
 import WidgetKit
 
-struct LyricLineText: View {
-    let text: String
-    let isRTL: Bool
-    var font: Font = .title3.bold()
-    var lineLimit: Int = 2
+typealias LyricsState = LyricsActivityAttributes.ContentState
 
-    var body: some View {
-        Text(text.isEmpty ? " " : text)
-            .font(font)
-            .lineLimit(lineLimit)
-            .multilineTextAlignment(isRTL ? .trailing : .leading)
-            .frame(maxWidth: .infinity, alignment: isRTL ? .trailing : .leading)
-            .environment(\.layoutDirection, isRTL ? .rightToLeft : .leftToRight)
-    }
-}
+// MARK: - Lock screen / banner (.medium)
 
 struct LockScreenLyricsView: View {
-    let state: LyricsActivityAttributes.ContentState
+    let state: LyricsState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            LyricLineText(text: state.currentLine, isRTL: state.isRTLCurrent)
-                .foregroundStyle(.white)
-            LyricLineText(text: state.nextLine, isRTL: state.isRTLNext,
-                          font: .subheadline, lineLimit: 1)
-                .foregroundStyle(.white.opacity(0.55))
-            if !state.trackTitle.isEmpty {
-                Text("\(state.trackTitle) · \(state.artist)")
-                    .font(.caption2)
-                    .foregroundStyle(.white.opacity(0.4))
-                    .lineLimit(1)
-            }
-        }
-        .padding()
-        .activityBackgroundTint(.black)
-        .activitySystemActionForegroundColor(.white)
+        let theme = LyricsTheme(state: state)
+        LyricsStackView(state: state, theme: theme)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(LyricsBackground(theme: theme))
+            .activityBackgroundTint(theme.tint)
+            .activitySystemActionForegroundColor(theme.primaryText)
     }
 }
 
+// MARK: - CarPlay dashboard / watchOS (.small)
+
+struct SmallLyricsActivityView: View {
+    let state: LyricsState
+
+    var body: some View {
+        let theme = LyricsTheme(state: state)
+        CarPlayLyricsView(state: state, theme: theme)
+            .background(LyricsBackground(theme: theme))
+            .activityBackgroundTint(theme.tint)
+            .activitySystemActionForegroundColor(theme.primaryText)
+    }
+}
+
+@available(iOS 18.0, *)
+struct FamilyAwareLyricsView: View {
+    @Environment(\.activityFamily) private var family
+    let state: LyricsState
+
+    var body: some View {
+        switch family {
+        case .small:
+            SmallLyricsActivityView(state: state)
+        case .medium:
+            LockScreenLyricsView(state: state)
+        @unknown default:
+            LockScreenLyricsView(state: state)
+        }
+    }
+}
+
+struct LyricsActivityContentView: View {
+    let state: LyricsState
+
+    var body: some View {
+        if #available(iOS 18.0, *) {
+            FamilyAwareLyricsView(state: state)
+        } else {
+            LockScreenLyricsView(state: state)
+        }
+    }
+}
+
+// MARK: - Dynamic Island (always on black)
+
+enum LyricsDynamicIsland {
+    static func make(_ state: LyricsState) -> DynamicIsland {
+        let accent = LyricsTheme(state: state).accent.color
+        return DynamicIsland {
+            DynamicIslandExpandedRegion(.bottom) {
+                VStack(spacing: 4) {
+                    LyricLineText(text: state.currentLine, isRTL: state.isRTLCurrent,
+                                  font: .system(size: 18, weight: .bold, design: .rounded),
+                                  color: .white, lineLimit: 2, minimumScaleFactor: 0.8)
+                    LyricLineText(text: state.nextLine, isRTL: state.isRTLNext,
+                                  font: .system(size: 13, weight: .medium, design: .rounded),
+                                  color: .white.opacity(0.55))
+                }
+                .padding(.horizontal, 6)
+            }
+        } compactLeading: {
+            Image(systemName: "music.note").foregroundStyle(accent)
+        } compactTrailing: {
+            Text(state.currentLine)
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .lineLimit(1)
+                .frame(maxWidth: 90)
+        } minimal: {
+            Image(systemName: "music.note").foregroundStyle(accent)
+        }
+        .keylineTint(accent)
+    }
+}
+
+// MARK: - Widgets
+
+/// iOS 17: lock screen + Dynamic Island only.
 struct LyricsLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: LyricsActivityAttributes.self) { context in
-            LockScreenLyricsView(state: context.state)
+            LyricsActivityContentView(state: context.state)
         } dynamicIsland: { context in
-            DynamicIsland {
-                DynamicIslandExpandedRegion(.bottom) {
-                    VStack(spacing: 4) {
-                        LyricLineText(text: context.state.currentLine,
-                                      isRTL: context.state.isRTLCurrent)
-                        LyricLineText(text: context.state.nextLine,
-                                      isRTL: context.state.isRTLNext,
-                                      font: .caption, lineLimit: 1)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            } compactLeading: {
-                Image(systemName: "music.note")
-            } compactTrailing: {
-                Text(context.state.currentLine)
-                    .font(.caption2)
-                    .lineLimit(1)
-                    .frame(maxWidth: 80)
-            } minimal: {
-                Image(systemName: "music.note")
-            }
+            LyricsDynamicIsland.make(context.state)
         }
+    }
+}
+
+/// iOS 18+: adds the `.small` family used by CarPlay (iOS 26) and watchOS.
+@available(iOS 18.0, *)
+struct LyricsLiveActivityWithSmall: Widget {
+    var body: some WidgetConfiguration {
+        ActivityConfiguration(for: LyricsActivityAttributes.self) { context in
+            LyricsActivityContentView(state: context.state)
+        } dynamicIsland: { context in
+            LyricsDynamicIsland.make(context.state)
+        }
+        .supplementalActivityFamilies([.small])
     }
 }

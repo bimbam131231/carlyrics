@@ -39,14 +39,24 @@ Lyrics must work in **Hebrew and English** (correct RTL/LTR per line).
 - Keep the lyrics provider behind a `LyricsProvider` protocol so more sources can be added later.
 
 ### Hebrew / RTL
-- Per line: if it contains Hebrew characters (U+0590–U+05FF), render RTL with trailing alignment; otherwise LTR. Apply in both the app and the Live Activity views.
+- Direction is decided **per line by its first strong character** (`TextDirection.isRTL` in `Shared/LyricsActivityAttributes.swift`): Hebrew/Arabic letter → RTL, any other letter → LTR; digits/punctuation/spaces are skipped. So "Tel Aviv בלילה" is LTR and "אני שומע את ה-radio" is RTL.
+- Rendering goes through `LyricLineText` (`Shared/LyricsViews.swift`) everywhere (app + Live Activity): per-line `.environment(\.layoutDirection, ...)`, `.frame(maxWidth: .infinity, alignment: .leading)` and `.multilineTextAlignment(.leading)`. In an RTL environment `.leading` is the right edge. **Never pair `.rightToLeft` with `.trailing`** — that resolves to the left edge (this was the Phase 1 bug). This also works when the phone's language is Hebrew.
 - Normalize search terms (strip "feat.", "- Remastered", parentheses) and retry LRCLIB search; Israeli tracks may have Hebrew or transliterated metadata.
 
 ### Live Activity
-- `ContentState`: `currentLine`, `nextLine`, `isRTLCurrent`, `isRTLNext`, `trackTitle`, `artist`.
+- `ContentState`: `previousLine`, `currentLine`, `nextLine`, `isRTLPrevious`, `isRTLCurrent`, `isRTLNext`, `trackTitle`, `artist`, `backgroundColorHex`, `accentColorHex` (`"#RRGGBB"`). Use the convenience init that computes the RTL flags.
 - Update the activity only when the line changes (not every poll).
-- Support `.supplementalActivityFamilies([.small])` and branch on `@Environment(\.activityFamily)` — the `.small` layout is what CarPlay / watchOS show. Big readable text, dark background, max 2 lines for current line.
-- Also provide lock screen + Dynamic Island layouts (simple).
+- CarPlay `.small` layout is **the most important layout**. Two widgets in the bundle, chosen with `if #available(iOS 18.0, *)`: `LyricsLiveActivityWithSmall` (adds `.supplementalActivityFamilies([.small])`) and `LyricsLiveActivity` (iOS 17). Content branches on `@Environment(\.activityFamily)` inside an `@available(iOS 18.0, *)` view.
+- Deployment target stays iOS 17; every iOS 18+ API must be behind `@available` / `#available`.
+
+### Design (keep in all phases)
+- Look: Apple Music lyrics / "Dynamic Lyrics" style. Elegant, no clutter, no translation line.
+- Lock screen (`.medium`): three stacked lines — previous (15pt medium, dimmed), current (24pt bold, max 2 lines, subtle text shadow), next (15pt medium, dimmed) — plus a tiny dim "title · artist" footer. SF Rounded, generous padding (22h / 18v).
+- CarPlay / watch (`.small`, `CarPlayLyricsView`): current line only big (20pt bold, max 2 lines, scales down to 0.6) + next line (13pt). No previous line, no track info.
+- Dynamic Island: black background, white text, current + next in expanded; accent-tinted note icon in compact/minimal.
+- Background: soft gradient from the album colors (`LyricsTheme` + `LyricsBackground` in `Shared/LyricsTheme.swift`): bg mixed toward accent at top-leading → bg → darkened bg, plus a faint accent radial glow. Text color (white vs near-black) is chosen by WCAG contrast against the gradient's worst-case stop.
+- Album colors (Phase 2+): Spotify doesn't provide colors — download the smallest album image in the app, compute a dominant/average color for `backgroundColorHex` and a more saturated one for `accentColorHex`, cache per album.
+- Shared views (`LyricLineText`, `LyricsStackView`, `CarPlayLyricsView`) live in `Shared/` so the app can preview the exact Live Activity look.
 - End the activity when playback stops for > 2 minutes or the user taps "Stop".
 
 ### Background execution
@@ -70,9 +80,9 @@ Lyrics must work in **Hebrew and English** (correct RTL/LTR per line).
 - Keep builds few: batch fixes; each macOS build costs runner minutes.
 
 ## Phases
-1. Skeleton: project.yml, app + widget, workflow builds a valid IPA. A test button starts a Live Activity with fixed text.
-2. Spotify login + now playing shown in app.
+1. ✅ Skeleton: project.yml, app + widget, workflow builds a valid IPA. A test button starts a Live Activity with fixed text.
+   - ✅ Design pass: RTL fix, three-line design, album-color theme, CarPlay `.small` layout (test lines cycle color themes).
+2. Spotify login + now playing shown in app (+ album colors from artwork).
 3. LRCLIB + LRC parsing + synced line in app.
 4. Live Activity updates + background audio keep-alive.
-5. Polish: RTL, CarPlay `.small` layout, error states.
-6. (Later, optional) translation line under the lyric.
+5. Polish: error states, edge cases.

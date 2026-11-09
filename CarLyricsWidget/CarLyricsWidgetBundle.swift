@@ -4,6 +4,10 @@ import WidgetKit
 @main
 struct CarLyricsWidgetBundle: WidgetBundle {
     var body: some Widget {
-        LyricsLiveActivity()
+        if #available(iOS 18.0, *) {
+            LyricsLiveActivityWithSmall()
+        } else {
+            LyricsLiveActivity()
+        }
     }
 }
