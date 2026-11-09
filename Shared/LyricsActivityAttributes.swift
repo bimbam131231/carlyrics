@@ -18,6 +18,10 @@ struct LyricsActivityAttributes: ActivityAttributes {
         /// Index of the current lyric line (-1 before the first line, -100 for
         /// status messages). Used as view identity so line changes animate.
         var lineID: Int
+        /// Sequence number of the update that carried this state (shown as "#N").
+        var updateSeq: Int
+        /// Render the stripped-down diagnostic layout (plain white on black).
+        var minimal: Bool
     }
 
     // Static attributes (none needed yet).
@@ -39,7 +43,9 @@ extension LyricsActivityAttributes.ContentState {
             artist: artist,
             backgroundColorHex: backgroundColorHex,
             accentColorHex: accentColorHex,
-            lineID: lineID
+            lineID: lineID,
+            updateSeq: 0,
+            minimal: false
         )
     }
 }

@@ -4,6 +4,7 @@ struct ContentView: View {
     @ObservedObject private var model = LyricsSessionModel.shared
     @Environment(\.scenePhase) private var scenePhase
     @AppStorage(LocationKeepAlive.settingKey) private var locationKeepAlive = false
+    @AppStorage(LiveActivityController.minimalSettingKey) private var minimalLiveActivity = false
 
     var body: some View {
         ScrollView {
@@ -92,6 +93,17 @@ struct ContentView: View {
                 }
             Text("Low-accuracy location updates keep the app running when locked. "
                  + "For the car (phone charging). Shows the blue location indicator.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+
+            Toggle("Minimal Live Activity", isOn: $minimalLiveActivity)
+                .font(.subheadline)
+                .padding(.top, 6)
+                .onChange(of: minimalLiveActivity) { _, enabled in
+                    model.minimalSettingChanged(enabled)
+                }
+            Text("Diagnostic: plain white text on black, no gradient, shadow or animation. "
+                 + "The \"#N\" in the card corner is the update number iOS rendered.")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

@@ -449,6 +449,14 @@ final class LyricsSessionModel: ObservableObject {
         log("Audio status: \(audio.statusReport())")
         log("App state=\(Self.appStateName()) remaining=\(Self.backgroundTimeText()) "
             + "location keep-alive=\(location.isActive) setting=\(LocationKeepAlive.isEnabledInSettings)")
+        log("Live Activity: \(LiveActivityController.authorizationReport()) "
+            + "minimal=\(LiveActivityController.minimalEnabled) hasActivity=\(liveActivity.hasActivity)")
+    }
+
+    /// Called when the "Minimal Live Activity" toggle changes: re-render now.
+    func minimalSettingChanged(_ enabled: Bool) {
+        log("Setting: minimal Live Activity \(enabled ? "ON" : "OFF")")
+        if isRunning { liveActivity.push(cardState, force: true) }
     }
 
     // MARK: - Keep-alive
