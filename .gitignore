@@ -1,0 +1,10 @@
+*.xcodeproj/
+*.xcworkspace/
+build/
+out/
+Payload/
+*.ipa
+DerivedData/
+.DS_Store
+CarLyrics/Info.plist
+CarLyricsWidget/Info.plist

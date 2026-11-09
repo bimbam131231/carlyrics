@@ -1,0 +1,74 @@
+name: CarLyrics
+options:
+  bundleIdPrefix: com.ori
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"
+    CODE_SIGN_STYLE: Manual
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  CarLyrics:
+    type: application
+    platform: iOS
+    sources:
+      - CarLyrics
+      - Shared
+    dependencies:
+      - target: CarLyricsWidget
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ori.carlyrics
+        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+    info:
+      path: CarLyrics/Info.plist
+      properties:
+        CFBundleDisplayName: CarLyrics
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        NSSupportsLiveActivities: true
+        NSSupportsLiveActivitiesFrequentUpdates: true
+        UIBackgroundModes:
+          - audio
+        CFBundleURLTypes:
+          - CFBundleURLName: com.ori.carlyrics
+            CFBundleURLSchemes:
+              - carlyrics
+
+  CarLyricsWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - CarLyricsWidget
+      - Shared
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.ori.carlyrics.widget
+    info:
+      path: CarLyricsWidget/Info.plist
+      properties:
+        CFBundleDisplayName: CarLyrics Widget
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+
+schemes:
+  CarLyrics:
+    build:
+      targets:
+        CarLyrics: all
+        CarLyricsWidget: all
+    archive:
+      config: Release
