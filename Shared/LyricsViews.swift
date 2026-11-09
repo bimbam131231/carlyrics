@@ -24,31 +24,56 @@ struct LyricLineText: View {
             .minimumScaleFactor(minimumScaleFactor)
             .multilineTextAlignment(.leading)
             .shadow(color: shadow, radius: 2, x: 0, y: 1)
+            .contentTransition(.opacity)
             .frame(maxWidth: .infinity, alignment: .leading)
             .environment(\.layoutDirection, isRTL ? .rightToLeft : .leftToRight)
     }
 }
 
+/// A line "slot" whose content slides up when the line changes.
+///
+/// The identity is `lineID + text`, so a new line is a new view: the old one
+/// is pushed out at the top and the new one comes in from the bottom. Each
+/// slot is clipped, so the stack rolls like a ticker instead of overlapping.
+/// Heartbeat updates with identical content keep the identity -> no animation.
+struct LyricSlot: View {
+    let key: String
+    let line: LyricLineText
+
+    var body: some View {
+        ZStack {
+            line
+                .id(key)
+                .transition(.push(from: .bottom))
+        }
+        .padding(.vertical, 2) // room for the text shadow inside the clip
+        .clipped()
+    }
+}
+
 /// Apple-Music-style stack: previous (dimmed, small), current (large, bold),
-/// next (dimmed, small). Used on the lock screen and as the in-app preview.
+/// next (dimmed, small). Used on the lock screen and as the in-app card.
 struct LyricsStackView: View {
     let state: LyricsActivityAttributes.ContentState
     let theme: LyricsTheme
     var showsTrackInfo: Bool = true
 
     var body: some View {
-        VStack(spacing: 8) {
-            LyricLineText(text: state.previousLine, isRTL: state.isRTLPrevious,
-                          font: .system(size: 15, weight: .medium, design: .rounded),
-                          color: theme.tertiaryText)
-            LyricLineText(text: state.currentLine, isRTL: state.isRTLCurrent,
-                          font: .system(size: 24, weight: .bold, design: .rounded),
-                          color: theme.primaryText,
-                          lineLimit: 2, minimumScaleFactor: 0.8,
-                          shadow: theme.textShadow)
-            LyricLineText(text: state.nextLine, isRTL: state.isRTLNext,
-                          font: .system(size: 15, weight: .medium, design: .rounded),
-                          color: theme.secondaryText)
+        VStack(spacing: 6) {
+            LyricSlot(key: "p\(state.lineID - 1)|\(state.previousLine)", line:
+                LyricLineText(text: state.previousLine, isRTL: state.isRTLPrevious,
+                              font: .system(size: 15, weight: .medium, design: .rounded),
+                              color: theme.tertiaryText))
+            LyricSlot(key: "c\(state.lineID)|\(state.currentLine)", line:
+                LyricLineText(text: state.currentLine, isRTL: state.isRTLCurrent,
+                              font: .system(size: 24, weight: .bold, design: .rounded),
+                              color: theme.primaryText,
+                              lineLimit: 2, minimumScaleFactor: 0.8,
+                              shadow: theme.textShadow))
+            LyricSlot(key: "n\(state.lineID + 1)|\(state.nextLine)", line:
+                LyricLineText(text: state.nextLine, isRTL: state.isRTLNext,
+                              font: .system(size: 15, weight: .medium, design: .rounded),
+                              color: theme.secondaryText))
             if showsTrackInfo && !state.trackTitle.isEmpty {
                 let info = state.artist.isEmpty ? state.trackTitle : "\(state.trackTitle) · \(state.artist)"
                 LyricLineText(text: info, isRTL: TextDirection.isRTL(info),
@@ -58,7 +83,7 @@ struct LyricsStackView: View {
             }
         }
         .padding(.horizontal, 22)
-        .padding(.vertical, 18)
+        .padding(.vertical, 16)
     }
 }
 
@@ -70,19 +95,21 @@ struct CarPlayLyricsView: View {
     let theme: LyricsTheme
 
     var body: some View {
-        VStack(spacing: 4) {
-            LyricLineText(text: state.currentLine, isRTL: state.isRTLCurrent,
-                          font: .system(size: 20, weight: .bold, design: .rounded),
-                          color: theme.primaryText,
-                          lineLimit: 2, minimumScaleFactor: 0.6,
-                          shadow: theme.textShadow)
-            LyricLineText(text: state.nextLine, isRTL: state.isRTLNext,
-                          font: .system(size: 13, weight: .semibold, design: .rounded),
-                          color: theme.secondaryText,
-                          minimumScaleFactor: 0.8)
+        VStack(spacing: 2) {
+            LyricSlot(key: "c\(state.lineID)|\(state.currentLine)", line:
+                LyricLineText(text: state.currentLine, isRTL: state.isRTLCurrent,
+                              font: .system(size: 20, weight: .bold, design: .rounded),
+                              color: theme.primaryText,
+                              lineLimit: 2, minimumScaleFactor: 0.6,
+                              shadow: theme.textShadow))
+            LyricSlot(key: "n\(state.lineID + 1)|\(state.nextLine)", line:
+                LyricLineText(text: state.nextLine, isRTL: state.isRTLNext,
+                              font: .system(size: 13, weight: .semibold, design: .rounded),
+                              color: theme.secondaryText,
+                              minimumScaleFactor: 0.8))
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

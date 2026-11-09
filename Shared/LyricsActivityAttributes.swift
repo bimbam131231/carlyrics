@@ -15,6 +15,9 @@ struct LyricsActivityAttributes: ActivityAttributes {
         /// gradient from them (light colors get darkened); text is always white.
         var backgroundColorHex: String
         var accentColorHex: String
+        /// Index of the current lyric line (-1 before the first line, -100 for
+        /// status messages). Used as view identity so line changes animate.
+        var lineID: Int
     }
 
     // Static attributes (none needed yet).
@@ -24,7 +27,7 @@ extension LyricsActivityAttributes.ContentState {
     /// Convenience init that computes the per-line text direction.
     init(previous: String, current: String, next: String,
          trackTitle: String, artist: String,
-         backgroundColorHex: String, accentColorHex: String) {
+         backgroundColorHex: String, accentColorHex: String, lineID: Int = -100) {
         self.init(
             previousLine: previous,
             currentLine: current,
@@ -35,7 +38,8 @@ extension LyricsActivityAttributes.ContentState {
             trackTitle: trackTitle,
             artist: artist,
             backgroundColorHex: backgroundColorHex,
-            accentColorHex: accentColorHex
+            accentColorHex: accentColorHex,
+            lineID: lineID
         )
     }
 }

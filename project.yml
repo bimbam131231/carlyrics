@@ -28,6 +28,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ori.carlyrics
         ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        # Lets Shared/ResumeLyricsIntent.swift call into the app only in the app target.
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) CARLYRICS_APP"
     info:
       path: CarLyrics/Info.plist
       properties:

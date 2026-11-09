@@ -46,7 +46,7 @@ Lyrics must work in **Hebrew and English** (correct RTL/LTR per line).
 - Normalize search terms (strip "feat.", "- Remastered", parentheses) and retry LRCLIB search; Israeli tracks may have Hebrew or transliterated metadata.
 
 ### Live Activity
-- `ContentState`: `previousLine`, `currentLine`, `nextLine`, `isRTLPrevious`, `isRTLCurrent`, `isRTLNext`, `trackTitle`, `artist`, `backgroundColorHex`, `accentColorHex` (`"#RRGGBB"`). Use the convenience init that computes the RTL flags.
+- `ContentState`: `previousLine`, `currentLine`, `nextLine`, `isRTLPrevious`, `isRTLCurrent`, `isRTLNext`, `trackTitle`, `artist`, `backgroundColorHex`, `accentColorHex` (`"#RRGGBB"`), `lineID` (current line index; -1 before first line, -100 for status messages). Use the convenience init that computes the RTL flags.
 - Update the activity only when the line changes (not every poll).
 - CarPlay `.small` layout is **the most important layout**. One widget `LyricsLiveActivity`; `.smallFamilyIfAvailable()` adds `.supplementalActivityFamilies([.small])` on iOS 18+ (SE-0360 `if #available { return }` pattern — `WidgetBundleBuilder` does NOT allow `if`/`#available`). Content branches on `@Environment(\.activityFamily)` inside an `@available(iOS 18.0, *)` view.
 - Deployment target stays iOS 17; every iOS 18+ API must be behind `@available` / `#available`.
@@ -56,6 +56,9 @@ Lyrics must work in **Hebrew and English** (correct RTL/LTR per line).
 - Lock screen (`.medium`): three stacked lines — previous (15pt medium, dimmed), current (24pt bold, max 2 lines, subtle text shadow), next (15pt medium, dimmed) — plus a tiny dim "title · artist" footer. SF Rounded, generous padding (22h / 18v).
 - CarPlay / watch (`.small`, `CarPlayLyricsView`): current line only big (20pt bold, max 2 lines, scales down to 0.6) + next line (13pt). No previous line, no track info.
 - Dynamic Island: black background, white text, current + next in expanded; accent-tinted note icon in compact/minimal.
+- Line-change animation:
+  - **App:** `ScrollingLyricsView` — whole lyric list scrolls (ScrollViewReader + spring), current line scale 1.0 / full opacity, others scale 0.68 and dimmed; top/bottom fade mask.
+  - **Live Activity** (lock screen, Dynamic Island, `.small`): each line is a clipped `LyricSlot` with `.id("<slot><lineID>|<text>")` + `.transition(.push(from: .bottom))`, plus `.contentTransition(.opacity)`. Identical heartbeat updates keep the id → no animation. Live Activities can't run real springs/continuous animation (see the comment block in `LyricsLiveActivity.swift`).
 - Background: **always dark and moody, text always white** (matches the dark CarPlay style). Soft gradient from the album colors (`LyricsTheme` + `LyricsBackground` in `Shared/LyricsTheme.swift`): bg mixed toward a darkened accent at top-leading → bg → darkened bg, plus a faint accent radial glow. Light album colors are darkened (`RGB.cappedLuminance`, max luminance 0.10 → ≥7:1 contrast with white). Never switch to dark text.
 - Album colors: Spotify doesn't provide colors — `AlbumColors` downloads the smallest album image, uses average (pulled toward the vivid color) for `backgroundColorHex` and the most vivid pixel for `accentColorHex`; cached per image URL in memory.
 - Shared views (`LyricLineText`, `LyricsStackView`, `CarPlayLyricsView`) live in `Shared/` so the app can preview the exact Live Activity look.
@@ -64,6 +67,15 @@ Lyrics must work in **Hebrew and English** (correct RTL/LTR per line).
 ### Background execution
 - iOS suspends apps in the background. Keep alive by playing a **silent audio loop** via `AVAudioSession` category `.playback` with option `.mixWithOthers` (must never interrupt Spotify). Start it only while a session is active.
 - This is acceptable because the app is personal and never goes through App Review.
+
+### Reliability (implement in Phase 4, together with the Live Activity)
+- **Audio interruptions & route changes:** observe `AVAudioSession.interruptionNotification` (calls, Siri, navigation prompts) and `AVAudioSession.routeChangeNotification` (CarPlay connect/disconnect, Bluetooth). On interruption `.ended` (whether or not `.shouldResume` is set) and on any route change while a session is active, re-activate the session and restart the silent loop automatically. Also restart on `mediaServicesWereResetNotification`. Log each event.
+- **Stale date:** every `activity.update` sets `staleDate = now + ~30s`. Because updates only happen on line changes, also send a "heartbeat" update (same content, new staleDate) at least every ~15s while running, so a healthy session never goes stale.
+- **Stale UI:** all layouts (`.small` / CarPlay, lock screen, Dynamic Island) check `context.isStale`. When stale, show **"Paused — tap to resume"** (same dark card design) — **never a frozen old lyric line**. Tapping the card opens the app via `.widgetURL(URL(string: "carlyrics://resume"))`; the app handles it in `.onOpenURL` and resumes the session (restart audio keep-alive + polling, push a fresh update).
+- **Resume button in the Live Activity:** `Button(intent: ResumeLyricsIntent())` where `ResumeLyricsIntent: LiveActivityIntent` (iOS 17+). LiveActivityIntents run in the **app's** process, so the intent file must be compiled into both targets (put it in `Shared/`); the app-side `perform()` resumes the session. Show it in the stale state (and optionally a small one in the lock screen layout).
+- **Spotify robustness:** refresh the access token proactively ~60s before expiry (already in `SpotifyAuth.validAccessToken`; also refresh on 401). Retry network errors with exponential backoff (e.g. 2s → 4s → 8s … capped at 30s, reset on success); respect 429 `Retry-After`. **Never stop polling silently**: the only reasons polling stops are the user tapping Stop, the 2-minute "nothing playing" rule, or an unrecoverable auth error — and each of those is logged and shown in the status line / Live Activity. **Every failure goes to the debug log.**
+- **App Intent "Start CarLyrics":** an `AppIntent` exposed via `AppShortcutsProvider` so it can run from a Shortcuts automation "When CarPlay connects" (set it to run without asking). Make it a `LiveActivityIntent` so it may start the activity from the background; if starting audio/activity from the background fails on device, fall back to `openAppWhenRun = true`. Also add a matching "Stop CarLyrics" intent.
+- **8-hour Live Activity limit:** on every start (button, intent, resume after the activity was ended), first end **all** existing `Activity<LyricsActivityAttributes>.activities` with `.immediate` dismissal, then request a new one. Also observe `activityStateUpdates`; if the system ends the activity (`.ended` / `.dismissed`) while the session is still running, start a fresh one and log it.
 
 ### App UI (simple)
 - "Connect Spotify" button, status line, "Start" / "Stop" buttons, preview of current/next line, small debug log view (last ~50 events) to help diagnose issues from the car.
@@ -87,5 +99,6 @@ Lyrics must work in **Hebrew and English** (correct RTL/LTR per line).
 2. ✅ Spotify login + now playing shown in app (+ album colors from artwork).
 3. ✅ LRCLIB + LRC parsing + synced line in app (three-line card).
    - Code: `CarLyrics/Spotify/` (PKCE auth, Keychain, client), `CarLyrics/Lyrics/` (LRC parser, `LyricsProvider`, `LRCLIBProvider`, cache), `LyricsSessionModel` (poll loop 3s + 0.2s tick, `cardState` = ContentState for the card/Live Activity), `TestActivitySection` (keep the Phase 1 test buttons).
-4. Live Activity updates + background audio keep-alive.
+4. ✅ Live Activity updates + background audio keep-alive + everything in "Reliability".
+   - Code: `LiveActivityController` (startFresh / attachOrStart / push with 30s staleDate + 15s heartbeat / observe end), `KeepAliveAudio`, `CarLyricsIntents.swift` (Start/Stop + `AppShortcutsProvider`), `Shared/ResumeLyricsIntent.swift` (uses `#if CARLYRICS_APP`, a compilation condition set only on the app target in project.yml), `LyricsSessionModel.shared` (singleton so intents can reach it).
 5. Polish: error states, edge cases.

@@ -1,7 +1,8 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var model = LyricsSessionModel()
+    @ObservedObject private var model = LyricsSessionModel.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         ScrollView {
@@ -19,6 +20,15 @@ struct ContentView: View {
                 DebugLogView(logs: model.logs)
             }
             .padding()
+        }
+        .onOpenURL { url in
+            // Tapping the Live Activity opens carlyrics://resume
+            if url.scheme == "carlyrics", url.host == "resume" {
+                model.resume(reason: "Live Activity tap")
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { model.appBecameActive() }
         }
     }
 
@@ -55,20 +65,27 @@ struct ContentView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            LyricsStackView(state: state, theme: theme, showsTrackInfo: false)
-                .frame(minHeight: 150)
-                .background(LyricsBackground(theme: theme))
-                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                .animation(.easeInOut(duration: 0.35), value: state)
+            Group {
+                if case .synced(let lines) = model.lyricsStatus {
+                    ScrollingLyricsView(lines: lines, currentIndex: model.lineIndex, theme: theme)
+                        .id(model.track?.id)
+                } else {
+                    LyricsStackView(state: state, theme: theme, showsTrackInfo: false)
+                        .frame(height: 210)
+                }
+            }
+            .background(LyricsBackground(theme: theme))
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .animation(.spring(response: 0.5, dampingFraction: 0.85), value: state)
         }
     }
 
     private var sessionButtons: some View {
         HStack(spacing: 12) {
-            Button("Start") { model.start() }
+            Button("Start") { model.start(reason: "app button") }
                 .buttonStyle(.borderedProminent)
                 .disabled(!model.isConnected || model.isRunning)
-            Button("Stop", role: .destructive) { model.stop() }
+            Button("Stop", role: .destructive) { model.stop(reason: "app button") }
                 .buttonStyle(.bordered)
                 .disabled(!model.isRunning)
         }

@@ -1,21 +1,84 @@
 import ActivityKit
+import AppIntents
 import SwiftUI
 import WidgetKit
 
 typealias LyricsState = LyricsActivityAttributes.ContentState
 
+// MARK: - Animation notes (iOS limits for Live Activities)
+//
+// Live Activity views are rendered by the system from archived snapshots, not
+// by a running SwiftUI app, so animation is restricted:
+// - Only changes between two ContentState updates animate. There is no
+//   continuous animation, no timers/TimelineView driving frames, no
+//   `withAnimation` from our code (only `Text(timerInterval:)` /
+//   `ProgressView(timerInterval:)` tick on their own).
+// - What works: `.transition(...)` on views whose `.id()` changes (we use
+//   `.push(from: .bottom)` per line slot -> lines slide up), and
+//   `.contentTransition(...)` (`.opacity`, `.interpolate`, `.numericText`)
+//   for in-place text changes.
+// - The system picks the timing; custom springs/durations are ignored or
+//   clamped (max ~2s). Animations may be skipped entirely when the device is
+//   in Low Power Mode, on the Always-On display, or when updates arrive faster
+//   than the system will animate them.
+// - CarPlay / watchOS (`.small`) may show a reduced or no animation at all.
+// So the real "Apple Music" spring scrolling only exists in the app
+// (`ScrollingLyricsView`); the Live Activity gets the closest equivalent.
+
+private let resumeURL = URL(string: "carlyrics://resume")
+
+// MARK: - Stale ("Paused — tap to resume")
+
+/// Shown whenever `context.isStale` (the app stopped sending heartbeats):
+/// never show a frozen old lyric line.
+struct StaleLyricsView: View {
+    let state: LyricsState
+    let compact: Bool
+
+    var body: some View {
+        let theme = LyricsTheme(state: state)
+        VStack(spacing: compact ? 6 : 10) {
+            Text("Paused — tap to resume")
+                .font(.system(size: compact ? 15 : 20, weight: .bold, design: .rounded))
+                .foregroundStyle(theme.primaryText)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
+                .shadow(color: theme.textShadow, radius: 2, x: 0, y: 1)
+            Button(intent: ResumeLyricsIntent()) {
+                Label("Resume", systemImage: "play.fill")
+                    .font(.system(size: compact ? 12 : 14, weight: .semibold, design: .rounded))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(.white.opacity(0.18), in: Capsule())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(theme.primaryText)
+        }
+        .padding(compact ? 10 : 18)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 // MARK: - Lock screen / banner (.medium)
 
 struct LockScreenLyricsView: View {
     let state: LyricsState
+    let isStale: Bool
 
     var body: some View {
         let theme = LyricsTheme(state: state)
-        LyricsStackView(state: state, theme: theme)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(LyricsBackground(theme: theme))
-            .activityBackgroundTint(theme.tint)
-            .activitySystemActionForegroundColor(theme.primaryText)
+        Group {
+            if isStale {
+                StaleLyricsView(state: state, compact: false)
+            } else {
+                LyricsStackView(state: state, theme: theme)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(LyricsBackground(theme: theme))
+        .activityBackgroundTint(theme.tint)
+        .activitySystemActionForegroundColor(theme.primaryText)
     }
 }
 
@@ -23,13 +86,20 @@ struct LockScreenLyricsView: View {
 
 struct SmallLyricsActivityView: View {
     let state: LyricsState
+    let isStale: Bool
 
     var body: some View {
         let theme = LyricsTheme(state: state)
-        CarPlayLyricsView(state: state, theme: theme)
-            .background(LyricsBackground(theme: theme))
-            .activityBackgroundTint(theme.tint)
-            .activitySystemActionForegroundColor(theme.primaryText)
+        Group {
+            if isStale {
+                StaleLyricsView(state: state, compact: true)
+            } else {
+                CarPlayLyricsView(state: state, theme: theme)
+            }
+        }
+        .background(LyricsBackground(theme: theme))
+        .activityBackgroundTint(theme.tint)
+        .activitySystemActionForegroundColor(theme.primaryText)
     }
 }
 
@@ -37,59 +107,83 @@ struct SmallLyricsActivityView: View {
 struct FamilyAwareLyricsView: View {
     @Environment(\.activityFamily) private var family
     let state: LyricsState
+    let isStale: Bool
 
     var body: some View {
         switch family {
         case .small:
-            SmallLyricsActivityView(state: state)
+            SmallLyricsActivityView(state: state, isStale: isStale)
         case .medium:
-            LockScreenLyricsView(state: state)
+            LockScreenLyricsView(state: state, isStale: isStale)
         @unknown default:
-            LockScreenLyricsView(state: state)
+            LockScreenLyricsView(state: state, isStale: isStale)
         }
     }
 }
 
 struct LyricsActivityContentView: View {
     let state: LyricsState
+    let isStale: Bool
 
     var body: some View {
-        if #available(iOS 18.0, *) {
-            FamilyAwareLyricsView(state: state)
-        } else {
-            LockScreenLyricsView(state: state)
+        Group {
+            if #available(iOS 18.0, *) {
+                FamilyAwareLyricsView(state: state, isStale: isStale)
+            } else {
+                LockScreenLyricsView(state: state, isStale: isStale)
+            }
         }
+        .widgetURL(resumeURL)
     }
 }
 
 // MARK: - Dynamic Island (always on black)
 
 enum LyricsDynamicIsland {
-    static func make(_ state: LyricsState) -> DynamicIsland {
+    static func make(_ state: LyricsState, isStale: Bool) -> DynamicIsland {
         let accent = LyricsTheme(state: state).accent.color
         return DynamicIsland {
             DynamicIslandExpandedRegion(.bottom) {
-                VStack(spacing: 4) {
-                    LyricLineText(text: state.currentLine, isRTL: state.isRTLCurrent,
-                                  font: .system(size: 18, weight: .bold, design: .rounded),
-                                  color: .white, lineLimit: 2, minimumScaleFactor: 0.8)
-                    LyricLineText(text: state.nextLine, isRTL: state.isRTLNext,
-                                  font: .system(size: 13, weight: .medium, design: .rounded),
-                                  color: .white.opacity(0.55))
+                if isStale {
+                    HStack {
+                        Text("Paused — tap to resume")
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .foregroundStyle(.white)
+                        Spacer()
+                        Button(intent: ResumeLyricsIntent()) {
+                            Image(systemName: "play.fill")
+                        }
+                        .tint(accent)
+                    }
+                    .padding(.horizontal, 6)
+                } else {
+                    VStack(spacing: 2) {
+                        LyricSlot(key: "c\(state.lineID)|\(state.currentLine)", line:
+                            LyricLineText(text: state.currentLine, isRTL: state.isRTLCurrent,
+                                          font: .system(size: 18, weight: .bold, design: .rounded),
+                                          color: .white, lineLimit: 2, minimumScaleFactor: 0.8))
+                        LyricSlot(key: "n\(state.lineID + 1)|\(state.nextLine)", line:
+                            LyricLineText(text: state.nextLine, isRTL: state.isRTLNext,
+                                          font: .system(size: 13, weight: .medium, design: .rounded),
+                                          color: .white.opacity(0.55)))
+                    }
+                    .padding(.horizontal, 6)
                 }
-                .padding(.horizontal, 6)
             }
         } compactLeading: {
-            Image(systemName: "music.note").foregroundStyle(accent)
+            Image(systemName: isStale ? "pause.fill" : "music.note").foregroundStyle(accent)
         } compactTrailing: {
-            Text(state.currentLine)
+            Text(isStale ? "Paused" : state.currentLine)
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .lineLimit(1)
                 .frame(maxWidth: 90)
+                .id("c\(state.lineID)|\(isStale)|\(state.currentLine)")
+                .transition(.push(from: .bottom))
         } minimal: {
-            Image(systemName: "music.note").foregroundStyle(accent)
+            Image(systemName: isStale ? "pause.fill" : "music.note").foregroundStyle(accent)
         }
         .keylineTint(accent)
+        .widgetURL(resumeURL)
     }
 }
 
@@ -98,9 +192,9 @@ enum LyricsDynamicIsland {
 struct LyricsLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: LyricsActivityAttributes.self) { context in
-            LyricsActivityContentView(state: context.state)
+            LyricsActivityContentView(state: context.state, isStale: context.isStale)
         } dynamicIsland: { context in
-            LyricsDynamicIsland.make(context.state)
+            LyricsDynamicIsland.make(context.state, isStale: context.isStale)
         }
         .smallFamilyIfAvailable()
     }

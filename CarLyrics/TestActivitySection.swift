@@ -61,7 +61,7 @@ struct TestActivitySection: View {
                 .background(LyricsBackground(theme: theme))
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
-        .animation(.easeInOut(duration: 0.3), value: testIndex)
+        .animation(.spring(response: 0.5, dampingFraction: 0.85), value: testIndex)
     }
 
     private func state(for index: Int) -> LyricsActivityAttributes.ContentState {
@@ -75,7 +75,8 @@ struct TestActivitySection: View {
             trackTitle: "Test Track",
             artist: "Test Artist",
             backgroundColorHex: bg,
-            accentColorHex: accent
+            accentColorHex: accent,
+            lineID: index
         )
     }
 
