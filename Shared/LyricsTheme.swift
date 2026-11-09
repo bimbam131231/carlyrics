@@ -34,6 +34,22 @@ struct RGB: Hashable {
         return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
     }
 
+    /// Darkens in small steps until luminance <= `maxLuminance` (keeps hue).
+    func cappedLuminance(_ maxLuminance: Double) -> RGB {
+        var c = self
+        var steps = 0
+        while c.luminance > maxLuminance && steps < 40 {
+            c = c.darkened(0.08)
+            steps += 1
+        }
+        return c
+    }
+
+    var hex: String {
+        func byte(_ v: Double) -> Int { Int((min(max(v, 0), 1) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X", byte(r), byte(g), byte(b))
+    }
+
     var color: Color { Color(red: r, green: g, blue: b) }
 
     static func contrast(_ l1: Double, _ l2: Double) -> Double {
@@ -42,38 +58,43 @@ struct RGB: Hashable {
 }
 
 /// Visual theme derived from the album colors in the ContentState.
+///
+/// Design rule: the card is ALWAYS dark and moody with white text (matches the
+/// dark CarPlay style). Light album colors are darkened until white text has
+/// at least ~7:1 contrast against every gradient stop.
 struct LyricsTheme {
     let top: RGB
     let middle: RGB
     let bottom: RGB
+    /// Darkened accent used for the background glow.
+    let glow: RGB
+    /// Original accent, for small tinted elements (icons).
     let accent: RGB
-    /// True when dark text reads better than white text on the gradient.
-    let usesDarkText: Bool
+
+    /// Luminance ceiling for the background (white contrast = 1.05 / (L + 0.05) >= 7).
+    static let maxBackgroundLuminance = 0.10
 
     init(backgroundHex: String, accentHex: String) {
         let bg = RGB(hex: backgroundHex) ?? .fallbackBackground
         let ac = RGB(hex: accentHex) ?? bg
-        top = bg.mixed(with: ac, 0.28)
-        middle = bg
-        bottom = bg.darkened(0.22)
         accent = ac
 
-        // Pick the text color against the lightest part of the gradient
-        // (worst case for white text) and the darkest part (worst case for dark text).
-        let darkText = 0.0056 // luminance of #111111
-        let lightest = max(top.luminance, middle.luminance, bottom.luminance)
-        let darkest = min(top.luminance, middle.luminance, bottom.luminance)
-        usesDarkText = RGB.contrast(darkest, darkText) > RGB.contrast(lightest, 1.0)
+        let mid = bg.cappedLuminance(Self.maxBackgroundLuminance * 0.8)
+        let darkAccent = ac.cappedLuminance(Self.maxBackgroundLuminance * 1.8)
+        middle = mid
+        top = mid.mixed(with: darkAccent, 0.3).cappedLuminance(Self.maxBackgroundLuminance)
+        bottom = mid.darkened(0.3)
+        glow = darkAccent
     }
 
     init(state: LyricsActivityAttributes.ContentState) {
         self.init(backgroundHex: state.backgroundColorHex, accentHex: state.accentColorHex)
     }
 
-    var primaryText: Color { usesDarkText ? Color(white: 0.07) : .white }
-    var secondaryText: Color { primaryText.opacity(usesDarkText ? 0.55 : 0.6) }
-    var tertiaryText: Color { primaryText.opacity(usesDarkText ? 0.4 : 0.42) }
-    var textShadow: Color { usesDarkText ? .white.opacity(0.25) : .black.opacity(0.35) }
+    var primaryText: Color { .white }
+    var secondaryText: Color { .white.opacity(0.6) }
+    var tertiaryText: Color { .white.opacity(0.42) }
+    var textShadow: Color { .black.opacity(0.35) }
     var tint: Color { middle.color }
 }
 
@@ -89,7 +110,7 @@ struct LyricsBackground: View {
                 endPoint: .bottomTrailing
             )
             RadialGradient(
-                colors: [theme.accent.color.opacity(0.28), .clear],
+                colors: [theme.glow.color.opacity(0.3), .clear],
                 center: .topLeading,
                 startRadius: 0,
                 endRadius: 280

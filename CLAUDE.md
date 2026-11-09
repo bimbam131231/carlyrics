@@ -32,6 +32,8 @@ Lyrics must work in **Hebrew and English** (correct RTL/LTR per line).
 - Primary source: **LRCLIB** (free, no key).
   1. `GET https://lrclib.net/api/get?track_name=&artist_name=&album_name=&duration=`
   2. Fallback: `GET https://lrclib.net/api/search?track_name=&artist_name=`, pick best match by duration (±3s) that has `syncedLyrics`.
+  3. Then normalized title/artist, then `search?q=title artist`, then `search?track_name=` only (duration filter protects against wrong matches).
+  - Lines are shown `Config.lyricsLeadSeconds` (0.3s) early to compensate latency. Empty LRC lines render as "♪".
   - Send a `User-Agent` header like `CarLyrics/1.0 (personal)`.
 - Parse LRC (`[mm:ss.xx] text`, multiple timestamps per line, ignore metadata tags).
 - If only `plainLyrics` exist, show "No synced lyrics" + title instead of guessing timing.
@@ -54,8 +56,8 @@ Lyrics must work in **Hebrew and English** (correct RTL/LTR per line).
 - Lock screen (`.medium`): three stacked lines — previous (15pt medium, dimmed), current (24pt bold, max 2 lines, subtle text shadow), next (15pt medium, dimmed) — plus a tiny dim "title · artist" footer. SF Rounded, generous padding (22h / 18v).
 - CarPlay / watch (`.small`, `CarPlayLyricsView`): current line only big (20pt bold, max 2 lines, scales down to 0.6) + next line (13pt). No previous line, no track info.
 - Dynamic Island: black background, white text, current + next in expanded; accent-tinted note icon in compact/minimal.
-- Background: soft gradient from the album colors (`LyricsTheme` + `LyricsBackground` in `Shared/LyricsTheme.swift`): bg mixed toward accent at top-leading → bg → darkened bg, plus a faint accent radial glow. Text color (white vs near-black) is chosen by WCAG contrast against the gradient's worst-case stop.
-- Album colors (Phase 2+): Spotify doesn't provide colors — download the smallest album image in the app, compute a dominant/average color for `backgroundColorHex` and a more saturated one for `accentColorHex`, cache per album.
+- Background: **always dark and moody, text always white** (matches the dark CarPlay style). Soft gradient from the album colors (`LyricsTheme` + `LyricsBackground` in `Shared/LyricsTheme.swift`): bg mixed toward a darkened accent at top-leading → bg → darkened bg, plus a faint accent radial glow. Light album colors are darkened (`RGB.cappedLuminance`, max luminance 0.10 → ≥7:1 contrast with white). Never switch to dark text.
+- Album colors: Spotify doesn't provide colors — `AlbumColors` downloads the smallest album image, uses average (pulled toward the vivid color) for `backgroundColorHex` and the most vivid pixel for `accentColorHex`; cached per image URL in memory.
 - Shared views (`LyricLineText`, `LyricsStackView`, `CarPlayLyricsView`) live in `Shared/` so the app can preview the exact Live Activity look.
 - End the activity when playback stops for > 2 minutes or the user taps "Stop".
 
@@ -82,7 +84,8 @@ Lyrics must work in **Hebrew and English** (correct RTL/LTR per line).
 ## Phases
 1. ✅ Skeleton: project.yml, app + widget, workflow builds a valid IPA. A test button starts a Live Activity with fixed text.
    - ✅ Design pass: RTL fix, three-line design, album-color theme, CarPlay `.small` layout (test lines cycle color themes).
-2. Spotify login + now playing shown in app (+ album colors from artwork).
-3. LRCLIB + LRC parsing + synced line in app.
+2. ✅ Spotify login + now playing shown in app (+ album colors from artwork).
+3. ✅ LRCLIB + LRC parsing + synced line in app (three-line card).
+   - Code: `CarLyrics/Spotify/` (PKCE auth, Keychain, client), `CarLyrics/Lyrics/` (LRC parser, `LyricsProvider`, `LRCLIBProvider`, cache), `LyricsSessionModel` (poll loop 3s + 0.2s tick, `cardState` = ContentState for the card/Live Activity), `TestActivitySection` (keep the Phase 1 test buttons).
 4. Live Activity updates + background audio keep-alive.
 5. Polish: error states, edge cases.

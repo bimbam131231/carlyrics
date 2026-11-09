@@ -11,8 +11,8 @@ struct LyricsActivityAttributes: ActivityAttributes {
         var isRTLNext: Bool
         var trackTitle: String
         var artist: String
-        /// Album-derived colors as "#RRGGBB". The view builds a soft gradient
-        /// from them and picks a text color with good contrast.
+        /// Album-derived colors as "#RRGGBB". The view builds a soft, always-dark
+        /// gradient from them (light colors get darkened); text is always white.
         var backgroundColorHex: String
         var accentColorHex: String
     }
