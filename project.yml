@@ -43,6 +43,9 @@ targets:
         NSSupportsLiveActivitiesFrequentUpdates: true
         UIBackgroundModes:
           - audio
+          - location
+        NSLocationWhenInUseUsageDescription: "CarLyrics can use low-accuracy location only to keep lyrics running while the phone is locked (Plan B keep-alive). Location is not stored or sent anywhere."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "CarLyrics can use low-accuracy location only to keep lyrics running while the phone is locked (Plan B keep-alive). Location is not stored or sent anywhere."
         CFBundleURLTypes:
           - CFBundleURLName: com.ori.carlyrics
             CFBundleURLSchemes:

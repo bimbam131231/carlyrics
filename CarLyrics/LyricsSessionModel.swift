@@ -1,5 +1,6 @@
 import ActivityKit
 import Foundation
+import UIKit
 
 enum LyricsStatus: Equatable {
     case idle
@@ -39,7 +40,11 @@ final class LyricsSessionModel: ObservableObject {
     private let cache: LyricsCache
     private let colorLoader: AlbumColorLoader
     private let audio: KeepAliveAudio
+    private let location: LocationKeepAlive
     private let liveActivity: LiveActivityController
+    private var lifecycleObservers: [NSObjectProtocol] = []
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var enteredBackgroundAt: Date?
 
     private var snapshot: PlaybackSnapshot?
     private var pollTask: Task<Void, Never>?
@@ -71,6 +76,7 @@ final class LyricsSessionModel: ObservableObject {
         cache = LyricsCache()
         colorLoader = AlbumColorLoader()
         audio = KeepAliveAudio()
+        location = LocationKeepAlive()
         liveActivity = LiveActivityController()
         isConnected = connected
         status = connected ? "Connected to Spotify" : "Not connected"
@@ -78,8 +84,11 @@ final class LyricsSessionModel: ObservableObject {
         auth.onLog = { [weak self] in self?.log($0) }
         lyricsProvider.onLog = { [weak self] in self?.log($0) }
         audio.onLog = { [weak self] in self?.log($0) }
+        location.onLog = { [weak self] in self?.log($0) }
         liveActivity.onLog = { [weak self] in self?.log($0) }
         liveActivity.onEndedExternally = { [weak self] state in self?.activityEndedExternally(state) }
+        observeLifecycle()
+        log("App launched (state=\(Self.appStateName()))")
     }
 
     // MARK: - Spotify connection
@@ -116,9 +125,9 @@ final class LyricsSessionModel: ObservableObject {
             log("Start (\(reason)) ignored: not connected")
             return
         }
-        log("Start (\(reason))")
+        log("Start (\(reason)), app state=\(Self.appStateName())")
         idleSince = nil
-        audio.start()
+        startKeepAlive()
         if !isRunning { launchLoops() }
         liveActivity.startFresh(cardState)
         lastActivityRestart = Date()
@@ -131,9 +140,9 @@ final class LyricsSessionModel: ObservableObject {
             log("Resume (\(reason)) ignored: not connected")
             return
         }
-        log("Resume (\(reason))")
+        log("Resume (\(reason)), app state=\(Self.appStateName())")
         idleSince = nil
-        audio.start()
+        startKeepAlive()
         if isRunning {
             pollTask?.cancel()
             pollTask = Task { [weak self] in await self?.pollLoop() }
@@ -151,6 +160,7 @@ final class LyricsSessionModel: ObservableObject {
         tickTask = nil
         isRunning = false
         audio.stop()
+        location.stop()
         liveActivity.end()
         status = isConnected ? "Stopped" : "Not connected"
         log("Session stopped (\(reason))")
@@ -195,6 +205,7 @@ final class LyricsSessionModel: ObservableObject {
             do {
                 let result = try await client.currentlyPlaying()
                 if Task.isCancelled { return }
+                logBackgroundPoll(result)
                 if consecutiveFailures > 0 {
                     log("Spotify reachable again after \(consecutiveFailures) failure(s)")
                     consecutiveFailures = 0
@@ -225,6 +236,7 @@ final class LyricsSessionModel: ObservableObject {
                     tickTask = nil
                     isRunning = false
                     audio.stop()
+                    location.stop()
                     liveActivity.end(final: msg, dismissAfter: 300)
                     status = "Spotify login expired, please reconnect"
                     return
@@ -253,6 +265,9 @@ final class LyricsSessionModel: ObservableObject {
         if now.timeIntervalSince(lastAudioCheck) > 15 {
             lastAudioCheck = now
             audio.ensurePlaying()
+            if UIApplication.shared.applicationState != .active {
+                log("BG check: remaining=\(Self.backgroundTimeText()) audio: \(audio.statusReport())")
+            }
         }
         if let idleSince, now.timeIntervalSince(idleSince) > Self.idleStopAfter {
             stop(reason: "nothing playing for 2 minutes")
@@ -395,9 +410,147 @@ final class LyricsSessionModel: ObservableObject {
 
     // MARK: - Debug log
 
+    /// Debug log: last 200 lines in memory + appended to Documents/CarLyrics-debug.log
+    /// (survives the app being killed; shareable from the app).
     func log(_ message: String) {
         let line = "\(Self.timeFormatter.string(from: Date()))  \(message)"
         logs.insert(line, at: 0)
-        if logs.count > 50 { logs.removeLast(logs.count - 50) }
+        if logs.count > 200 { logs.removeLast(logs.count - 200) }
+        Self.appendToLogFile(line)
+    }
+
+    static let logFileURL: URL = FileManager.default
+        .urls(for: .documentDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("CarLyrics-debug.log")
+
+    private static func appendToLogFile(_ line: String) {
+        let data = Data((line + "\n").utf8)
+        let url = logFileURL
+        if let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int,
+           size > 1_000_000 {
+            try? FileManager.default.removeItem(at: url) // keep it small
+        }
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    func clearLogs() {
+        logs.removeAll()
+        try? FileManager.default.removeItem(at: Self.logFileURL)
+        log("Log cleared")
+    }
+
+    func logAudioStatus() {
+        log("Audio status: \(audio.statusReport())")
+        log("App state=\(Self.appStateName()) remaining=\(Self.backgroundTimeText()) "
+            + "location keep-alive=\(location.isActive) setting=\(LocationKeepAlive.isEnabledInSettings)")
+    }
+
+    // MARK: - Keep-alive
+
+    private func startKeepAlive() {
+        audio.start()
+        if LocationKeepAlive.isEnabledInSettings {
+            location.start()
+        } else {
+            location.stop()
+        }
+    }
+
+    /// Called when the Plan B toggle changes.
+    func locationSettingChanged(_ enabled: Bool) {
+        log("Setting: location keep-alive \(enabled ? "ON" : "OFF")")
+        guard isRunning else { return }
+        if enabled { location.start() } else { location.stop() }
+    }
+
+    // MARK: - Lifecycle diagnostics
+
+    private func observeLifecycle() {
+        let center = NotificationCenter.default
+        func on(_ name: Notification.Name, _ handler: @escaping @MainActor (LyricsSessionModel) -> Void) {
+            let token = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    handler(self)
+                }
+            }
+            lifecycleObservers.append(token)
+        }
+        on(UIApplication.didEnterBackgroundNotification) { $0.didEnterBackground() }
+        on(UIApplication.willEnterForegroundNotification) { $0.willEnterForeground() }
+        on(UIApplication.willResignActiveNotification) { $0.log("App: will resign active") }
+        on(UIApplication.didBecomeActiveNotification) { $0.log("App: became active") }
+        on(UIApplication.protectedDataWillBecomeUnavailableNotification) {
+            $0.log("App: device LOCKED (protected data unavailable), running=\($0.isRunning)")
+        }
+        on(UIApplication.protectedDataDidBecomeAvailableNotification) { $0.log("App: device unlocked") }
+        on(UIApplication.didReceiveMemoryWarningNotification) { $0.log("App: memory warning") }
+        on(UIApplication.willTerminateNotification) { $0.log("App: WILL TERMINATE") }
+    }
+
+    private func didEnterBackground() {
+        enteredBackgroundAt = Date()
+        log("App: entered BACKGROUND, running=\(isRunning), remaining=\(Self.backgroundTimeText())")
+        guard isRunning else { return }
+        log("BG audio: \(audio.statusReport())")
+        // Diagnostic safety net: ~30s of guaranteed runtime, and a log line
+        // if iOS is about to suspend us (= keep-alive is NOT working).
+        guard backgroundTask == .invalid else { return }
+        backgroundTask = UIApplication.shared.beginBackgroundTask(withName: "CarLyrics keep-alive check") { [weak self] in
+            Task { @MainActor in
+                guard let self else { return }
+                self.log("App: background task EXPIRED — iOS will suspend the app now (keep-alive not effective)")
+                self.endBackgroundTask()
+            }
+        }
+    }
+
+    private func willEnterForeground() {
+        let away = enteredBackgroundAt.map { Int(Date().timeIntervalSince($0)) } ?? 0
+        log("App: entering FOREGROUND after \(away)s in background")
+        enteredBackgroundAt = nil
+        endBackgroundTask()
+    }
+
+    private func endBackgroundTask() {
+        guard backgroundTask != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundTask)
+        backgroundTask = .invalid
+    }
+
+    private func logBackgroundPoll(_ result: PlaybackResult) {
+        guard UIApplication.shared.applicationState != .active else { return }
+        let what: String
+        switch result {
+        case .playing(let snap):
+            what = "\(snap.isPlaying ? "playing" : "paused") \(snap.track?.title ?? "-") @\(snap.progressMs / 1000)s"
+        case .nothingPlaying:
+            what = "nothing playing"
+        case .rateLimited(let s):
+            what = "429 retry \(Int(s))s"
+        }
+        log("BG poll [\(Self.appStateName())] remaining=\(Self.backgroundTimeText()): \(what)")
+    }
+
+    static func appStateName() -> String {
+        switch UIApplication.shared.applicationState {
+        case .active: return "active"
+        case .inactive: return "inactive"
+        case .background: return "background"
+        @unknown default: return "unknown"
+        }
+    }
+
+    /// "unlimited" means iOS considers the app legitimately running in the
+    /// background (audio/location working); a countdown means it will be suspended.
+    static func backgroundTimeText() -> String {
+        let t = UIApplication.shared.backgroundTimeRemaining
+        return t > 100_000 ? "unlimited" : "\(Int(t))s"
     }
 }

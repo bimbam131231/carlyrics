@@ -43,6 +43,14 @@ jobs:
             echo "::error::CarLyricsWidget.appex missing from CarLyrics.app/PlugIns"
             exit 1
           fi
+          MODES=$(plutil -extract UIBackgroundModes json -o - "$APP/Info.plist")
+          echo "UIBackgroundModes: $MODES"
+          for m in audio location; do
+            if ! echo "$MODES" | grep -q "\"$m\""; then
+              echo "::error::UIBackgroundModes is missing '$m'"
+              exit 1
+            fi
+          done
 
       - name: Package IPA
         run: |

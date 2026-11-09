@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject private var model = LyricsSessionModel.shared
     @Environment(\.scenePhase) private var scenePhase
+    @AppStorage(LocationKeepAlive.settingKey) private var locationKeepAlive = false
 
     var body: some View {
         ScrollView {
@@ -12,11 +13,13 @@ struct ContentView: View {
                 spotifySection
                 nowPlayingSection
                 sessionButtons
+                settingsSection
 
                 Divider().padding(.vertical, 4)
                 TestActivitySection()
 
                 Divider().padding(.vertical, 4)
+                diagnosticsButtons
                 DebugLogView(logs: model.logs)
             }
             .padding()
@@ -78,6 +81,34 @@ struct ContentView: View {
             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
             .animation(.spring(response: 0.5, dampingFraction: 0.85), value: state)
         }
+    }
+
+    private var settingsSection: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Toggle("Plan B: keep alive with location", isOn: $locationKeepAlive)
+                .font(.subheadline)
+                .onChange(of: locationKeepAlive) { _, enabled in
+                    model.locationSettingChanged(enabled)
+                }
+            Text("Low-accuracy location updates keep the app running when locked. "
+                 + "For the car (phone charging). Shows the blue location indicator.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private var diagnosticsButtons: some View {
+        HStack(spacing: 10) {
+            Button("Log audio status") { model.logAudioStatus() }
+            ShareLink(item: LyricsSessionModel.logFileURL) {
+                Label("Share log", systemImage: "square.and.arrow.up")
+            }
+            Button("Clear", role: .destructive) { model.clearLogs() }
+        }
+        .font(.caption)
+        .buttonStyle(.bordered)
     }
 
     private var sessionButtons: some View {

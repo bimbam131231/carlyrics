@@ -67,6 +67,9 @@ Lyrics must work in **Hebrew and English** (correct RTL/LTR per line).
 ### Background execution
 - iOS suspends apps in the background. Keep alive by playing a **silent audio loop** via `AVAudioSession` category `.playback` with option `.mixWithOthers` (must never interrupt Spotify). Start it only while a session is active.
 - This is acceptable because the app is personal and never goes through App Review.
+- The loop is generated in memory (`KeepAliveAudio.ditheredSilenceWAV`): ±1 LSB dither (~-90 dBFS), not pure zeros. `play()`'s return value is checked; `statusReport()` logs category/options/active/isPlaying/advancing/route.
+- **Plan B** (Settings toggle "keep alive with location", `@AppStorage("keepAliveLocation")`, off by default): `LocationKeepAlive` — When-In-Use permission, `allowsBackgroundLocationUpdates = true`, `pausesLocationUpdatesAutomatically = false`, 3 km accuracy, `CLBackgroundActivitySession`. Needs `location` in `UIBackgroundModes` + usage strings (project.yml). CI fails if `audio` or `location` is missing from the built Info.plist.
+- **Diagnostics:** the debug log (200 lines in memory, also appended to `Documents/CarLyrics-debug.log`, shareable from the app) records foreground/background/lock events, every poll while not active (with `applicationState` + `backgroundTimeRemaining`, "unlimited" = keep-alive working), every Live Activity update with its result, audio interruptions/route changes, and a "background task EXPIRED" line if iOS is about to suspend the app.
 
 ### Reliability (implement in Phase 4, together with the Live Activity)
 - **Audio interruptions & route changes:** observe `AVAudioSession.interruptionNotification` (calls, Siri, navigation prompts) and `AVAudioSession.routeChangeNotification` (CarPlay connect/disconnect, Bluetooth). On interruption `.ended` (whether or not `.shouldResume` is set) and on any route change while a session is active, re-activate the session and restart the silent loop automatically. Also restart on `mediaServicesWereResetNotification`. Log each event.
@@ -78,7 +81,7 @@ Lyrics must work in **Hebrew and English** (correct RTL/LTR per line).
 - **8-hour Live Activity limit:** on every start (button, intent, resume after the activity was ended), first end **all** existing `Activity<LyricsActivityAttributes>.activities` with `.immediate` dismissal, then request a new one. Also observe `activityStateUpdates`; if the system ends the activity (`.ended` / `.dismissed`) while the session is still running, start a fresh one and log it.
 
 ### App UI (simple)
-- "Connect Spotify" button, status line, "Start" / "Stop" buttons, preview of current/next line, small debug log view (last ~50 events) to help diagnose issues from the car.
+- "Connect Spotify" button, status line, "Start" / "Stop" buttons, preview of current/next line, debug log view (last 200 events, also saved to a shareable file) to help diagnose issues from the car.
 
 ## Build & delivery (GitHub Actions)
 - Workflow `.github/workflows/build.yml`, triggered on push to `main` and `workflow_dispatch`.

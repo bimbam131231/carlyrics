@@ -62,8 +62,16 @@ final class LiveActivityController {
         guard force || changed || now.timeIntervalSince(lastSent) >= Self.heartbeatInterval else { return }
         lastState = state
         lastSent = now
+        let kind = force ? "forced" : (changed ? "line" : "heartbeat")
         let content = ActivityContent(state: state, staleDate: now.addingTimeInterval(Self.staleAfter))
-        Task { await activity.update(content) }
+        let started = Date()
+        Task { [weak self] in
+            await activity.update(content)
+            // update() doesn't throw; report how long it took and the activity state after.
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            let line = state.currentLine.prefix(24)
+            self?.onLog("LA update [\(kind)] #\(state.lineID) \"\(line)\" -> \(activity.activityState) (\(ms)ms, app=\(LyricsSessionModel.appStateName()))")
+        }
     }
 
     /// End the current activity, optionally showing a final message for a while.
