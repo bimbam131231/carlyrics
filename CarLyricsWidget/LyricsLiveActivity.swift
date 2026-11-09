@@ -27,54 +27,6 @@ typealias LyricsState = LyricsActivityAttributes.ContentState
 
 private let resumeURL = URL(string: "carlyrics://resume")
 
-// MARK: - Diagnostics: update counter + minimal mode
-
-/// Tiny "#N" in the corner: the sequence number of the update iOS rendered.
-struct UpdateCounter: View {
-    let seq: Int
-    var body: some View {
-        Text("#\(seq)")
-            .font(.system(size: 9, weight: .medium, design: .monospaced))
-            .foregroundStyle(.white.opacity(0.45))
-            .padding(5)
-    }
-}
-
-/// Diagnostic layout (app toggle "Minimal Live Activity"): plain white text on
-/// black. No gradient, shadow, custom fonts, transitions or animation — to test
-/// whether rendering cost (extension memory/time limits) is why updates stop.
-struct MinimalLyricsView: View {
-    let state: LyricsState
-    let isStale: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(isStale ? "Paused — tap to resume" : state.currentLine)
-                .font(.system(size: 20, weight: .bold))
-                .foregroundColor(.white)
-                .lineLimit(2)
-                .minimumScaleFactor(0.6)
-            if !isStale {
-                Text(state.nextLine)
-                    .font(.system(size: 14))
-                    .foregroundColor(.gray)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-        .padding(12)
-        .overlay(alignment: .topTrailing) { UpdateCounter(seq: state.updateSeq) }
-        .background(Color.black)
-        .activityBackgroundTint(.black)
-        .activitySystemActionForegroundColor(.white)
-        .transaction { t in
-            t.animation = nil
-            t.disablesAnimations = true
-        }
-    }
-}
-
 // MARK: - Stale ("Paused — tap to resume")
 
 /// Shown whenever `context.isStale` (the app stopped sending heartbeats):
@@ -124,7 +76,6 @@ struct LockScreenLyricsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay(alignment: .topTrailing) { UpdateCounter(seq: state.updateSeq) }
         .background(LyricsBackground(theme: theme))
         .activityBackgroundTint(theme.tint)
         .activitySystemActionForegroundColor(theme.primaryText)
@@ -146,7 +97,6 @@ struct SmallLyricsActivityView: View {
                 CarPlayLyricsView(state: state, theme: theme)
             }
         }
-        .overlay(alignment: .topTrailing) { UpdateCounter(seq: state.updateSeq) }
         .background(LyricsBackground(theme: theme))
         .activityBackgroundTint(theme.tint)
         .activitySystemActionForegroundColor(theme.primaryText)
@@ -177,9 +127,7 @@ struct LyricsActivityContentView: View {
 
     var body: some View {
         Group {
-            if state.minimal {
-                MinimalLyricsView(state: state, isStale: isStale)
-            } else if #available(iOS 18.0, *) {
+            if #available(iOS 18.0, *) {
                 FamilyAwareLyricsView(state: state, isStale: isStale)
             } else {
                 LockScreenLyricsView(state: state, isStale: isStale)
@@ -193,7 +141,6 @@ struct LyricsActivityContentView: View {
 
 enum LyricsDynamicIsland {
     static func make(_ state: LyricsState, isStale: Bool) -> DynamicIsland {
-        if state.minimal { return makeMinimal(state, isStale: isStale) }
         let accent = LyricsTheme(state: state).accent.color
         return DynamicIsland {
             DynamicIslandExpandedRegion(.bottom) {
@@ -236,26 +183,6 @@ enum LyricsDynamicIsland {
             Image(systemName: isStale ? "pause.fill" : "music.note").foregroundStyle(accent)
         }
         .keylineTint(accent)
-        .widgetURL(resumeURL)
-    }
-
-    private static func makeMinimal(_ state: LyricsState, isStale: Bool) -> DynamicIsland {
-        let current = isStale ? "Paused — tap to resume" : state.currentLine
-        return DynamicIsland {
-            DynamicIslandExpandedRegion(.bottom) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(current).font(.system(size: 17, weight: .bold)).lineLimit(2)
-                    Text("#\(state.updateSeq)").font(.system(size: 9, design: .monospaced)).foregroundColor(.gray)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        } compactLeading: {
-            Text("#\(state.updateSeq)").font(.system(size: 10, design: .monospaced))
-        } compactTrailing: {
-            Text(current).font(.system(size: 12)).lineLimit(1).frame(maxWidth: 90)
-        } minimal: {
-            Image(systemName: "music.note")
-        }
         .widgetURL(resumeURL)
     }
 }

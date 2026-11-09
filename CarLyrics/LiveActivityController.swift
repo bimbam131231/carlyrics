@@ -11,8 +11,7 @@ import Foundation
 ///   so it never adds traffic while lines are changing.
 /// - Every update carries `staleDate = now + 30s` -> a dead app shows
 ///   "Paused — tap to resume" instead of a frozen line.
-/// - Each sent update gets a sequence number (`updateSeq`) shown as "#N" on the
-///   card, so you can see which update iOS actually rendered.
+/// - Each sent update gets a sequence number (`updateSeq`, "#N" in the log).
 /// - `startFresh` ends ALL existing activities first (8-hour limit / leftovers).
 /// - Logs what iOS reports via `contentUpdates` and `activityStateUpdates`.
 @MainActor
@@ -22,24 +21,20 @@ final class LiveActivityController {
     static let staleAfter: TimeInterval = 30
     static let heartbeatInterval: TimeInterval = 15
     static let minUpdateInterval: TimeInterval = 1
-    static let minimalSettingKey = "minimalLiveActivity"
 
     var onLog: (String) -> Void = { _ in }
     /// Called when the current activity ends/is dismissed without us asking.
     var onEndedExternally: (ActivityState) -> Void = { _ in }
 
     private var activity: Activity<LyricsActivityAttributes>?
-    /// Last sent content WITHOUT seq/minimal stamping (used for change detection).
+    /// Last sent content WITHOUT the seq stamp (used for change detection).
     private var lastState: State?
-    private var lastMinimal = false
     private var lastSent = Date.distantPast
     private var seq = 0
     private var stateTask: Task<Void, Never>?
     private var contentTask: Task<Void, Never>?
 
     var hasActivity: Bool { activity != nil }
-
-    static var minimalEnabled: Bool { UserDefaults.standard.bool(forKey: minimalSettingKey) }
 
     /// End every existing lyrics activity, then request a new one.
     @discardableResult
@@ -72,8 +67,7 @@ final class LiveActivityController {
     func push(_ state: State, force: Bool = false) {
         guard let activity else { return }
         let now = Date()
-        let minimal = Self.minimalEnabled
-        let changed = state != lastState || minimal != lastMinimal
+        let changed = state != lastState
         let sinceLast = now.timeIntervalSince(lastSent)
 
         let kind: String
@@ -91,10 +85,9 @@ final class LiveActivityController {
         }
 
         lastState = state
-        lastMinimal = minimal
         lastSent = now
         seq += 1
-        let stamped = stamp(state, minimal: minimal)
+        let stamped = stamp(state)
         let content = ActivityContent(state: stamped, staleDate: now.addingTimeInterval(Self.staleAfter))
         let started = Date()
         Task { [weak self] in
@@ -112,7 +105,7 @@ final class LiveActivityController {
         guard let activity else { return }
         self.activity = nil
         lastState = nil
-        let content = state.map { ActivityContent(state: stamp($0, minimal: Self.minimalEnabled), staleDate: nil) }
+        let content = state.map { ActivityContent(state: stamp($0), staleDate: nil) }
         let policy: ActivityUIDismissalPolicy = dismissAfter > 0
             ? .after(Date().addingTimeInterval(dismissAfter)) : .immediate
         Task { await activity.end(content, dismissalPolicy: policy) }
@@ -137,10 +130,9 @@ final class LiveActivityController {
 
     // MARK: - Private
 
-    private func stamp(_ state: State, minimal: Bool) -> State {
+    private func stamp(_ state: State) -> State {
         var s = state
         s.updateSeq = seq
-        s.minimal = minimal
         return s
     }
 
@@ -152,20 +144,18 @@ final class LiveActivityController {
         }
         do {
             let now = Date()
-            let minimal = Self.minimalEnabled
             seq += 1
             let a = try Activity.request(
                 attributes: LyricsActivityAttributes(),
-                content: ActivityContent(state: stamp(state, minimal: minimal),
+                content: ActivityContent(state: stamp(state),
                                          staleDate: now.addingTimeInterval(Self.staleAfter)),
                 pushType: nil
             )
             activity = a
             lastState = state
-            lastMinimal = minimal
             lastSent = now
             observe(a)
-            onLog("Live Activity: started \(a.id.prefix(6)) #\(seq) minimal=\(minimal)")
+            onLog("Live Activity: started \(a.id.prefix(6)) #\(seq)")
             return true
         } catch {
             onLog("Live Activity: request failed: \(error.localizedDescription)")

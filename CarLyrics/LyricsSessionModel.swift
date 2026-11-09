@@ -59,6 +59,9 @@ final class LyricsSessionModel: ObservableObject {
     private var lastActivityRestart = Date.distantPast
 
     static let idleStopAfter: TimeInterval = 120
+    static let autoStartKey = "autoStart"
+    /// Set when the user taps Stop in the app; blocks auto-start until next Start.
+    private var userStopped = false
     static let maxBackoff: TimeInterval = 30
 
     private static let timeFormatter: DateFormatter = {
@@ -119,18 +122,37 @@ final class LyricsSessionModel: ObservableObject {
 
     /// Start (or restart) the session with a FRESH Live Activity.
     /// Ending the old activity on every start handles the 8-hour limit.
-    func start(reason: String) {
+    /// Returns false if the start can't be fully effective from the current
+    /// state (not connected, Live Activity refused, or location keep-alive
+    /// can't start from the background) — the App Intent then opens the app.
+    @discardableResult
+    func start(reason: String) -> Bool {
+        userStopped = false
         guard isConnected else {
             status = "Connect Spotify first"
             log("Start (\(reason)) ignored: not connected")
-            return
+            return false
         }
         log("Start (\(reason)), app state=\(Self.appStateName())")
         idleSince = nil
         startKeepAlive()
         if !isRunning { launchLoops() }
-        liveActivity.startFresh(cardState)
+        let activityOK = liveActivity.startFresh(cardState)
         lastActivityRestart = Date()
+        let foreground = UIApplication.shared.applicationState == .active
+        let locationOK = foreground || location.canStartInBackground
+        if !activityOK || !locationOK {
+            log("Start (\(reason)) not fully effective: activity=\(activityOK) location=\(locationOK) (foreground=\(foreground))")
+        }
+        return activityOK && locationOK
+    }
+
+    /// Auto-start setting: start when the app opens with Spotify connected,
+    /// unless the user tapped Stop since the last start.
+    func autoStartIfNeeded() {
+        guard UserDefaults.standard.object(forKey: Self.autoStartKey) as? Bool ?? true else { return }
+        guard isConnected, !isRunning, !userStopped else { return }
+        start(reason: "auto-start")
     }
 
     /// Resume after the card went stale / the app was suspended or relaunched.
@@ -153,6 +175,7 @@ final class LyricsSessionModel: ObservableObject {
     }
 
     func stop(reason: String) {
+        if reason == "app button" { userStopped = true }
         guard isRunning || liveActivity.hasActivity else { return }
         pollTask?.cancel()
         tickTask?.cancel()
@@ -448,33 +471,19 @@ final class LyricsSessionModel: ObservableObject {
     func logAudioStatus() {
         log("Audio status: \(audio.statusReport())")
         log("App state=\(Self.appStateName()) remaining=\(Self.backgroundTimeText()) "
-            + "location keep-alive=\(location.isActive) setting=\(LocationKeepAlive.isEnabledInSettings)")
+            + "location keep-alive=\(location.isActive)")
         log("Live Activity: \(LiveActivityController.authorizationReport()) "
-            + "minimal=\(LiveActivityController.minimalEnabled) hasActivity=\(liveActivity.hasActivity)")
-    }
-
-    /// Called when the "Minimal Live Activity" toggle changes: re-render now.
-    func minimalSettingChanged(_ enabled: Bool) {
-        log("Setting: minimal Live Activity \(enabled ? "ON" : "OFF")")
-        if isRunning { liveActivity.push(cardState, force: true) }
+            + "hasActivity=\(liveActivity.hasActivity)")
     }
 
     // MARK: - Keep-alive
 
+    /// Silent audio + location, only between Start and Stop.
+    /// Location is REQUIRED: without it iOS ignores background Live Activity
+    /// updates (see CLAUDE.md "Background execution").
     private func startKeepAlive() {
         audio.start()
-        if LocationKeepAlive.isEnabledInSettings {
-            location.start()
-        } else {
-            location.stop()
-        }
-    }
-
-    /// Called when the Plan B toggle changes.
-    func locationSettingChanged(_ enabled: Bool) {
-        log("Setting: location keep-alive \(enabled ? "ON" : "OFF")")
-        guard isRunning else { return }
-        if enabled { location.start() } else { location.stop() }
+        location.start()
     }
 
     // MARK: - Lifecycle diagnostics

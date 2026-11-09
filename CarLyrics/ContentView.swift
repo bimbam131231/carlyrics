@@ -3,8 +3,8 @@ import SwiftUI
 struct ContentView: View {
     @ObservedObject private var model = LyricsSessionModel.shared
     @Environment(\.scenePhase) private var scenePhase
-    @AppStorage(LocationKeepAlive.settingKey) private var locationKeepAlive = false
-    @AppStorage(LiveActivityController.minimalSettingKey) private var minimalLiveActivity = false
+    @AppStorage(LyricsSessionModel.autoStartKey) private var autoStart = true
+    @State private var showDeveloper = false
 
     var body: some View {
         ScrollView {
@@ -17,14 +17,20 @@ struct ContentView: View {
                 settingsSection
 
                 Divider().padding(.vertical, 4)
-                TestActivitySection()
-
-                Divider().padding(.vertical, 4)
-                diagnosticsButtons
-                DebugLogView(logs: model.logs)
+                DisclosureGroup("Developer", isExpanded: $showDeveloper) {
+                    VStack(spacing: 18) {
+                        TestActivitySection()
+                        Divider()
+                        diagnosticsButtons
+                        DebugLogView(logs: model.logs)
+                    }
+                    .padding(.top, 12)
+                }
+                .font(.subheadline)
             }
             .padding()
         }
+        .onAppear { model.autoStartIfNeeded() }
         .onOpenURL { url in
             // Tapping the Live Activity opens carlyrics://resume
             if url.scheme == "carlyrics", url.host == "resume" {
@@ -32,7 +38,10 @@ struct ContentView: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { model.appBecameActive() }
+            if phase == .active {
+                model.appBecameActive()
+                model.autoStartIfNeeded()
+            }
         }
     }
 
@@ -86,24 +95,10 @@ struct ContentView: View {
 
     private var settingsSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Toggle("Plan B: keep alive with location", isOn: $locationKeepAlive)
+            Toggle("Auto-start", isOn: $autoStart)
                 .font(.subheadline)
-                .onChange(of: locationKeepAlive) { _, enabled in
-                    model.locationSettingChanged(enabled)
-                }
-            Text("Low-accuracy location updates keep the app running when locked. "
-                 + "For the car (phone charging). Shows the blue location indicator.")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-
-            Toggle("Minimal Live Activity", isOn: $minimalLiveActivity)
-                .font(.subheadline)
-                .padding(.top, 6)
-                .onChange(of: minimalLiveActivity) { _, enabled in
-                    model.minimalSettingChanged(enabled)
-                }
-            Text("Diagnostic: plain white text on black, no gradient, shadow or animation. "
-                 + "The \"#N\" in the card corner is the update number iOS rendered.")
+            Text("Start lyrics automatically when the app opens and Spotify is connected "
+                 + "(for the \"When CarPlay connects\" Shortcuts automation).")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }

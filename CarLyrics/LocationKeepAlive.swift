@@ -1,9 +1,10 @@
 import CoreLocation
 import Foundation
 
-/// Plan B keep-alive (Settings toggle, off by default): continuous low-accuracy
-/// location updates keep the app running in the background. Meant for the car,
-/// where the phone is usually charging.
+/// Location keep-alive, ALWAYS on between Start and Stop (together with the
+/// silent audio). Tested on device: with audio-only keep-alive the app keeps
+/// running but iOS does NOT apply background Live Activity updates; with
+/// location keep-alive every background update is applied. Do not remove.
 ///
 /// - "When In Use" permission is enough: updates are started in the
 ///   foreground, `allowsBackgroundLocationUpdates = true` +
@@ -12,8 +13,6 @@ import Foundation
 /// - Shows the blue location indicator in the status bar while active.
 @MainActor
 final class LocationKeepAlive: NSObject {
-    static let settingKey = "keepAliveLocation"
-
     var onLog: (String) -> Void = { _ in }
 
     private let manager = CLLocationManager()
@@ -22,9 +21,9 @@ final class LocationKeepAlive: NSObject {
     private var updateCount = 0
     private var lastUpdateLog = Date.distantPast
 
-    static var isEnabledInSettings: Bool {
-        UserDefaults.standard.bool(forKey: settingKey)
-    }
+    /// With "Always" permission, updates can also be started while the app is
+    /// in the background (e.g. from the Shortcuts automation).
+    var canStartInBackground: Bool { manager.authorizationStatus == .authorizedAlways }
 
     override init() {
         super.init()
