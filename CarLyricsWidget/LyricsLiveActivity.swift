@@ -93,9 +93,8 @@ enum LyricsDynamicIsland {
     }
 }
 
-// MARK: - Widgets
+// MARK: - Widget
 
-/// iOS 17: lock screen + Dynamic Island only.
 struct LyricsLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: LyricsActivityAttributes.self) { context in
@@ -103,18 +102,18 @@ struct LyricsLiveActivity: Widget {
         } dynamicIsland: { context in
             LyricsDynamicIsland.make(context.state)
         }
+        .smallFamilyIfAvailable()
     }
 }
 
-/// iOS 18+: adds the `.small` family used by CarPlay (iOS 26) and watchOS.
-@available(iOS 18.0, *)
-struct LyricsLiveActivityWithSmall: Widget {
-    var body: some WidgetConfiguration {
-        ActivityConfiguration(for: LyricsActivityAttributes.self) { context in
-            LyricsActivityContentView(state: context.state)
-        } dynamicIsland: { context in
-            LyricsDynamicIsland.make(context.state)
+extension WidgetConfiguration {
+    /// iOS 18+: adds the `.small` family used by CarPlay (iOS 26) and watchOS.
+    /// Relies on SE-0360 (opaque result types with limited availability):
+    /// keep this exact `if #available { return } return self` shape.
+    func smallFamilyIfAvailable() -> some WidgetConfiguration {
+        if #available(iOS 18.0, *) {
+            return self.supplementalActivityFamilies([.small])
         }
-        .supplementalActivityFamilies([.small])
+        return self
     }
 }

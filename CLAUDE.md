@@ -46,7 +46,7 @@ Lyrics must work in **Hebrew and English** (correct RTL/LTR per line).
 ### Live Activity
 - `ContentState`: `previousLine`, `currentLine`, `nextLine`, `isRTLPrevious`, `isRTLCurrent`, `isRTLNext`, `trackTitle`, `artist`, `backgroundColorHex`, `accentColorHex` (`"#RRGGBB"`). Use the convenience init that computes the RTL flags.
 - Update the activity only when the line changes (not every poll).
-- CarPlay `.small` layout is **the most important layout**. Two widgets in the bundle, chosen with `if #available(iOS 18.0, *)`: `LyricsLiveActivityWithSmall` (adds `.supplementalActivityFamilies([.small])`) and `LyricsLiveActivity` (iOS 17). Content branches on `@Environment(\.activityFamily)` inside an `@available(iOS 18.0, *)` view.
+- CarPlay `.small` layout is **the most important layout**. One widget `LyricsLiveActivity`; `.smallFamilyIfAvailable()` adds `.supplementalActivityFamilies([.small])` on iOS 18+ (SE-0360 `if #available { return }` pattern — `WidgetBundleBuilder` does NOT allow `if`/`#available`). Content branches on `@Environment(\.activityFamily)` inside an `@available(iOS 18.0, *)` view.
 - Deployment target stays iOS 17; every iOS 18+ API must be behind `@available` / `#available`.
 
 ### Design (keep in all phases)
