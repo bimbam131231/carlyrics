@@ -33,6 +33,8 @@ Lyrics must work in **Hebrew and English** (correct RTL/LTR per line).
   1. `GET https://lrclib.net/api/get?track_name=&artist_name=&album_name=&duration=`
   2. Fallback: `GET https://lrclib.net/api/search?track_name=&artist_name=`, pick best match by duration (±3s) that has `syncedLyrics`.
   3. Then normalized title/artist, then `search?q=title artist`, then `search?track_name=` only (duration filter protects against wrong matches).
+  - **Name variants:** before searching, the app fetches `GET /v1/tracks/{id}` twice, with `Accept-Language: he` and `en` (`SpotifyClient.trackNames`). Spotify often returns transliterated/English names while LRCLIB has Hebrew titles (or vice versa). The chain runs step by step over all distinct variants (spotify, he, en): all `get`s first, then all searches, etc. Every LRCLIB query and its outcome is logged.
+  - **Missing lyrics:** when all attempts fail (not found / plain only), the track goes to `MissingLyricsLog` (`Documents/CarLyrics-missing-lyrics.json`, max 100) shown in Developer → "Missing lyrics" (title, artist, he/en names, duration, every query tried; shareable as text). Removed automatically if lyrics are found later.
   - Lines are shown `Config.lyricsLeadSeconds` (0.3s) early to compensate latency. Empty LRC lines render as "♪".
   - Send a `User-Agent` header like `CarLyrics/1.0 (personal)`.
 - Parse LRC (`[mm:ss.xx] text`, multiple timestamps per line, ignore metadata tags).
@@ -93,6 +95,7 @@ Lyrics must work in **Hebrew and English** (correct RTL/LTR per line).
   `xcodebuild archive -scheme CarLyrics -configuration Release -destination 'generic/platform=iOS' -archivePath build/CarLyrics.xcarchive CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=""`
 - Package: copy `CarLyrics.app` into `Payload/`, zip to `CarLyrics.ipa`, upload as artifact `CarLyrics-ipa`.
 - Verify the widget extension `.appex` is inside `CarLyrics.app/PlugIns/` before uploading (fail the build if missing).
+- App icon: `scripts/make_icon.swift` (CoreGraphics) generates `CarLyrics/Assets.xcassets/AppIcon.appiconset/AppIcon.png` (1024×1024, single-size, gitignored) on the runner before `xcodegen`; CI fails if `CFBundleIcons` / `AppIcon*.png` is missing from the built app. The PNG is also uploaded as artifact `AppIcon-png`.
 
 ## Dev loop (Claude Code)
 1. Make changes, commit, `git push`.

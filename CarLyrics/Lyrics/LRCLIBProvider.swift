@@ -11,6 +11,11 @@ private struct LRCLIBRecord: Decodable {
 }
 
 /// https://lrclib.net — free, no API key.
+///
+/// Runs the fallback chain over every name variant (Spotify default, Hebrew,
+/// English), step by step: all precise queries for all variants before the
+/// fuzzier ones, so a Hebrew exact match beats a transliterated title-only guess.
+/// Every query and its outcome is logged.
 @MainActor
 final class LRCLIBProvider: LyricsProvider {
     let name = "LRCLIB"
@@ -19,14 +24,35 @@ final class LRCLIBProvider: LyricsProvider {
     private let base = "https://lrclib.net/api"
     private let durationTolerance: TimeInterval = 3
 
-    func fetchLyrics(for q: LyricsQuery) async throws -> LyricsResult {
+    func fetchLyrics(for q: LyricsQuery) async throws -> LyricsFetch {
         var sawPlain = false
         var sawInstrumental = false
         var hadError = false
         var triedQueries = Set<String>()
+        var attempts: [String] = []
 
-        /// Returns parsed synced lines from the best duration match, if any.
-        func consider(_ records: [LRCLIBRecord]) -> [LyricLine]? {
+        /// One LRCLIB request; returns synced lines from the best duration match.
+        func attempt(_ step: String, _ variant: String, _ path: String,
+                     _ items: [(String, String)]) async -> [LyricLine]? {
+            let items = items.filter { !$0.1.trimmingCharacters(in: .whitespaces).isEmpty }
+            guard !items.isEmpty else { return nil }
+            let key = path + "?" + items.map { "\($0.0)=\($0.1)" }.joined(separator: "&")
+            guard !triedQueries.contains(key) else { return nil }
+            triedQueries.insert(key)
+
+            let shown = items.map { "\($0.0)=\"\($0.1)\"" }.joined(separator: " ")
+            let label = "\(step) [\(variant)] \(path) \(shown)"
+            let records: [LRCLIBRecord]
+            do {
+                records = try await request(path, items)
+            } catch {
+                hadError = true
+                let line = "\(label) → error: \(error.localizedDescription)"
+                attempts.append(line)
+                onLog("LRCLIB \(line)")
+                return nil
+            }
+
             let matching = records.filter { r in
                 guard let d = r.duration else { return false }
                 return abs(d - q.duration) <= durationTolerance
@@ -38,72 +64,71 @@ final class LRCLIBProvider: LyricsProvider {
             let synced = matching
                 .filter { !($0.syncedLyrics ?? "").isEmpty }
                 .sorted { abs(($0.duration ?? 0) - q.duration) < abs(($1.duration ?? 0) - q.duration) }
+
+            var found: (LRCLIBRecord, [LyricLine])?
             for r in synced {
                 let lines = LRCParser.parse(r.syncedLyrics ?? "")
-                if !lines.isEmpty { return lines }
+                if !lines.isEmpty { found = (r, lines); break }
             }
-            return nil
+
+            var outcome = "\(records.count) result(s), \(matching.count) within ±\(Int(durationTolerance))s, "
+                + "\(synced.count) synced"
+            if let found {
+                let (r, lines) = found
+                outcome += " → HIT id \(r.id.map(String.init) ?? "?") "
+                    + "\"\(r.trackName ?? "?")\" — \(r.artistName ?? "?") (\(lines.count) lines)"
+            }
+            let line = "\(label) → \(outcome)"
+            attempts.append(line)
+            onLog("LRCLIB \(line)")
+            return found?.1
         }
 
-        func run(_ label: String, _ path: String, _ items: [String: String]) async -> [LRCLIBRecord] {
-            let key = path + items.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&")
-            guard !triedQueries.contains(key) else { return [] }
-            triedQueries.insert(key)
-            do {
-                let records = try await request(path, items)
-                onLog("LRCLIB \(label): \(records.count) result(s)")
-                return records
-            } catch {
-                hadError = true
-                onLog("LRCLIB \(label) error: \(error.localizedDescription)")
-                return []
-            }
-        }
+        let duration = String(Int(q.duration.rounded()))
 
         // 1. Exact match.
-        let exact = await run("get", "get", [
-            "track_name": q.title,
-            "artist_name": q.artist,
-            "album_name": q.album,
-            "duration": String(Int(q.duration.rounded())),
-        ])
-        if let lines = consider(exact) { return .synced(lines) }
-
-        // 2. Search with original metadata.
-        let search = await run("search", "search", [
-            "track_name": q.title, "artist_name": q.artist,
-        ])
-        if let lines = consider(search) { return .synced(lines) }
-
+        for n in q.names {
+            if let lines = await attempt("1 get", n.label, "get", [
+                ("track_name", n.title), ("artist_name", n.artist),
+                ("album_name", n.album), ("duration", duration),
+            ]) { return LyricsFetch(result: .synced(lines), attempts: attempts) }
+        }
+        // 2. Search with the metadata as-is.
+        for n in q.names {
+            if let lines = await attempt("2 search", n.label, "search", [
+                ("track_name", n.title), ("artist_name", n.artist),
+            ]) { return LyricsFetch(result: .synced(lines), attempts: attempts) }
+        }
         // 3. Search with normalized metadata (strip feat./Remastered/parentheses).
-        let nt = SearchNormalizer.title(q.title)
-        let na = SearchNormalizer.artist(q.artist)
-        let normalized = await run("search (normalized)", "search", [
-            "track_name": nt, "artist_name": na,
-        ])
-        if let lines = consider(normalized) { return .synced(lines) }
-
-        // 4. Free-text search (helps with Hebrew vs transliterated metadata).
-        let freeText = await run("search (q)", "search", [
-            "q": "\(nt) \(na)",
-        ])
-        if let lines = consider(freeText) { return .synced(lines) }
-
+        for n in q.names {
+            if let lines = await attempt("3 normalized", n.label, "search", [
+                ("track_name", SearchNormalizer.title(n.title)),
+                ("artist_name", SearchNormalizer.artist(n.artist)),
+            ]) { return LyricsFetch(result: .synced(lines), attempts: attempts) }
+        }
+        // 4. Free-text search.
+        for n in q.names {
+            let text = "\(SearchNormalizer.title(n.title)) \(SearchNormalizer.artist(n.artist))"
+            if let lines = await attempt("4 q", n.label, "search", [("q", text)]) {
+                return LyricsFetch(result: .synced(lines), attempts: attempts)
+            }
+        }
         // 5. Title only, trusting the duration filter.
-        let titleOnly = await run("search (title)", "search", [
-            "track_name": nt,
-        ])
-        if let lines = consider(titleOnly) { return .synced(lines) }
+        for n in q.names {
+            if let lines = await attempt("5 title", n.label, "search", [
+                ("track_name", SearchNormalizer.title(n.title)),
+            ]) { return LyricsFetch(result: .synced(lines), attempts: attempts) }
+        }
 
-        if sawPlain { return .plainOnly }
-        if sawInstrumental { return .instrumental }
+        if sawPlain { return LyricsFetch(result: .plainOnly, attempts: attempts) }
+        if sawInstrumental { return LyricsFetch(result: .instrumental, attempts: attempts) }
         if hadError { throw URLError(.cannotLoadFromNetwork) }
-        return .notFound
+        return LyricsFetch(result: .notFound, attempts: attempts)
     }
 
-    private func request(_ path: String, _ items: [String: String]) async throws -> [LRCLIBRecord] {
+    private func request(_ path: String, _ items: [(String, String)]) async throws -> [LRCLIBRecord] {
         var comps = URLComponents(string: "\(base)/\(path)")!
-        comps.queryItems = items.map { URLQueryItem(name: $0.key, value: $0.value) }
+        comps.queryItems = items.map { URLQueryItem(name: $0.0, value: $0.1) }
         // URLComponents leaves "+" alone, which servers read as a space.
         comps.percentEncodedQuery = comps.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         guard let url = comps.url else { throw URLError(.badURL) }

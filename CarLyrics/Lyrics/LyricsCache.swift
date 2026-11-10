@@ -1,6 +1,6 @@
 import Foundation
 
-/// Lyrics per Spotify track ID: memory + small disk cache (Caches/lyrics).
+/// Lyrics per Spotify track ID: memory + small disk cache (Caches/lyrics-v2; v2 re-fetches everything once after the he/en name variants were added).
 /// `.notFound` is kept in memory only so it is retried on the next launch.
 @MainActor
 final class LyricsCache {
@@ -10,7 +10,7 @@ final class LyricsCache {
 
     init() {
         directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("lyrics", isDirectory: true)
+            .appendingPathComponent("lyrics-v2", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 

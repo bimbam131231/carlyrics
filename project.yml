@@ -27,7 +27,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.ori.carlyrics
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # Lets Shared/ResumeLyricsIntent.swift call into the app only in the app target.
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) CARLYRICS_APP"
     info:
@@ -44,8 +44,8 @@ targets:
         UIBackgroundModes:
           - audio
           - location
-        NSLocationWhenInUseUsageDescription: "CarLyrics can use low-accuracy location only to keep lyrics running while the phone is locked (Plan B keep-alive). Location is not stored or sent anywhere."
-        NSLocationAlwaysAndWhenInUseUsageDescription: "CarLyrics can use low-accuracy location only to keep lyrics running while the phone is locked (Plan B keep-alive). Location is not stored or sent anywhere."
+        NSLocationWhenInUseUsageDescription: "CarLyrics uses low-accuracy location only while a lyrics session is running, so iOS keeps updating the lyrics on the lock screen and CarPlay. Location is not stored or sent anywhere."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "Allows the \"Start CarLyrics\" shortcut to start lyrics while the phone is locked. Location is only used to keep the session alive and is not stored or sent anywhere."
         CFBundleURLTypes:
           - CFBundleURLName: com.ori.carlyrics
             CFBundleURLSchemes:

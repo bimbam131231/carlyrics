@@ -8,3 +8,5 @@ DerivedData/
 .DS_Store
 CarLyrics/Info.plist
 CarLyricsWidget/Info.plist
+# Generated on CI by scripts/make_icon.swift
+CarLyrics/Assets.xcassets/AppIcon.appiconset/AppIcon.png

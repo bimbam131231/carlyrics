@@ -33,11 +33,13 @@ final class LyricsSessionModel: ObservableObject {
     @Published private(set) var backgroundHex = Config.defaultBackgroundHex
     @Published private(set) var accentHex = Config.defaultAccentHex
     @Published private(set) var logs: [String] = []
+    @Published private(set) var missingEntries: [MissingLyricsEntry] = []
 
     private let auth: SpotifyAuth
     private let client: SpotifyClient
     private let lyricsProvider: LRCLIBProvider
     private let cache: LyricsCache
+    private let missingLyrics: MissingLyricsLog
     private let colorLoader: AlbumColorLoader
     private let audio: KeepAliveAudio
     private let location: LocationKeepAlive
@@ -77,12 +79,14 @@ final class LyricsSessionModel: ObservableObject {
         client = SpotifyClient(auth: spotifyAuth)
         lyricsProvider = LRCLIBProvider()
         cache = LyricsCache()
+        missingLyrics = MissingLyricsLog()
         colorLoader = AlbumColorLoader()
         audio = KeepAliveAudio()
         location = LocationKeepAlive()
         liveActivity = LiveActivityController()
         isConnected = connected
         status = connected ? "Connected to Spotify" : "Not connected"
+        missingEntries = missingLyrics.entries
 
         auth.onLog = { [weak self] in self?.log($0) }
         lyricsProvider.onLog = { [weak self] in self?.log($0) }
@@ -350,18 +354,85 @@ final class LyricsSessionModel: ObservableObject {
             return
         }
         lyricsStatus = .loading
-        let query = LyricsQuery(title: t.title, artist: t.primaryArtist, album: t.album, duration: t.duration)
+
+        // Spotify may return transliterated/English names while LRCLIB has the
+        // Hebrew title (or the other way round): fetch both localizations.
+        async let heNames = localizedNames(t, "he")
+        async let enNames = localizedNames(t, "en")
+        let (he, en) = await (heNames, enNames)
+        guard !Task.isCancelled, track?.id == t.id else { return }
+
+        var names: [LyricsQuery.Names] = []
+        func add(_ label: String, _ title: String, _ artist: String, _ album: String) {
+            guard !title.isEmpty else { return }
+            let isDuplicate = names.contains {
+                $0.title == title && $0.artist == artist && $0.album == album
+            }
+            if !isDuplicate {
+                names.append(.init(label: label, title: title, artist: artist, album: album))
+            }
+        }
+        add("spotify", t.title, t.primaryArtist, t.album)
+        if let he { add("he", he.title, he.primaryArtist, he.album) }
+        if let en { add("en", en.title, en.primaryArtist, en.album) }
+        log("Lyrics search: \(names.count) name variant(s): "
+            + names.map { "[\($0.label)] \($0.title) — \($0.artist)" }.joined(separator: " | "))
+
+        let query = LyricsQuery(names: names, duration: t.duration)
         do {
-            let result = try await lyricsProvider.fetchLyrics(for: query)
+            let fetch = try await lyricsProvider.fetchLyrics(for: query)
             guard !Task.isCancelled, track?.id == t.id else { return }
-            cache.set(result, for: t.id)
-            setLyrics(result, source: lyricsProvider.name)
+            cache.set(fetch.result, for: t.id)
+            setLyrics(fetch.result, source: lyricsProvider.name)
+            recordMissing(t, fetch: fetch, he: he, en: en)
         } catch {
             guard !Task.isCancelled, track?.id == t.id else { return }
             lyricsStatus = .failed(error.localizedDescription)
             log("Lyrics failed: \(error.localizedDescription)")
         }
     }
+
+    /// Spotify names in one language; nil (logged) on failure — never blocks lyrics.
+    private func localizedNames(_ t: SpotifyTrack, _ language: String) async -> TrackNames? {
+        guard SpotifyTrack.isCatalogID(t.id) else { return nil }
+        do {
+            let names = try await client.trackNames(id: t.id, language: language)
+            log("Spotify names (\(language)): \(names.summary) · album \(names.album)")
+            return names
+        } catch {
+            log("Spotify names (\(language)) failed: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// All attempts failed → "Missing lyrics" list; found later → remove it.
+    private func recordMissing(_ t: SpotifyTrack, fetch: LyricsFetch, he: TrackNames?, en: TrackNames?) {
+        let outcome: String
+        switch fetch.result {
+        case .notFound: outcome = "not found"
+        case .plainOnly: outcome = "plain lyrics only (no synced)"
+        case .synced, .instrumental:
+            if missingLyrics.remove(trackID: t.id) {
+                self.missingEntries = missingLyrics.entries
+                log("Missing lyrics: removed \(t.title) (found now)")
+            }
+            return
+        }
+        missingLyrics.add(MissingLyricsEntry(
+            id: t.id, date: Date(), title: t.title, artist: t.artist, album: t.album,
+            durationSeconds: Int(t.duration.rounded()), outcome: outcome,
+            hebrewNames: he, englishNames: en, queries: fetch.attempts))
+        missingEntries = missingLyrics.entries
+        log("Missing lyrics: added \(t.title) — \(t.artist) (\(outcome), \(fetch.attempts.count) queries)")
+    }
+
+    func clearMissingLyrics() {
+        missingLyrics.clear()
+        missingEntries = []
+        log("Missing lyrics list cleared")
+    }
+
+    var missingLyricsReport: String { missingLyrics.reportText }
 
     private func setLyrics(_ result: LyricsResult, source: String) {
         switch result {

@@ -1,9 +1,17 @@
 import Foundation
 
 struct LyricsQuery {
-    let title: String
-    let artist: String
-    let album: String
+    /// One spelling of the track metadata (e.g. Spotify's default, Hebrew, English).
+    struct Names {
+        /// Short tag for logs: "spotify", "he", "en".
+        let label: String
+        let title: String
+        let artist: String
+        let album: String
+    }
+
+    /// Name variants, most trusted first; duplicates already removed.
+    let names: [Names]
     /// Seconds.
     let duration: TimeInterval
 }
@@ -15,11 +23,17 @@ enum LyricsResult: Codable, Equatable {
     case notFound
 }
 
+/// A provider's answer plus every query it tried (for the "Missing lyrics" report).
+struct LyricsFetch {
+    let result: LyricsResult
+    let attempts: [String]
+}
+
 /// A lyrics source. Add more implementations later (and try them in order).
 @MainActor
 protocol LyricsProvider {
     var name: String { get }
-    func fetchLyrics(for query: LyricsQuery) async throws -> LyricsResult
+    func fetchLyrics(for query: LyricsQuery) async throws -> LyricsFetch
 }
 
 /// Cleans Spotify metadata for fuzzy search.

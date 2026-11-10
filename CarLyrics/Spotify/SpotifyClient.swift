@@ -11,6 +11,22 @@ struct SpotifyTrack: Equatable {
     var artist: String { artists.joined(separator: ", ") }
     var primaryArtist: String { artists.first ?? "" }
     var duration: TimeInterval { TimeInterval(durationMs) / 1000 }
+
+    /// Real Spotify catalog track IDs are 22 base62 characters (local files aren't).
+    static func isCatalogID(_ id: String) -> Bool {
+        id.count == 22 && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
+    }
+}
+
+/// Track metadata localized for one language (`GET /v1/tracks/{id}` + Accept-Language).
+struct TrackNames: Codable, Equatable {
+    let language: String
+    let title: String
+    let artists: [String]
+    let album: String
+
+    var primaryArtist: String { artists.first ?? "" }
+    var summary: String { "\(title) — \(artists.joined(separator: ", "))" }
 }
 
 struct PlaybackSnapshot {
@@ -93,6 +109,37 @@ struct SpotifyClient {
             case 429:
                 let retry = Double(http.value(forHTTPHeaderField: "Retry-After") ?? "") ?? 10
                 return .rateLimited(retryAfter: retry)
+            default:
+                throw SpotifyError.http(http.statusCode, String(decoding: data.prefix(200), as: UTF8.self))
+            }
+        }
+        throw SpotifyError.http(401, "Unauthorized after token refresh")
+    }
+
+    /// Track names as Spotify localizes them for `language` ("he", "en").
+    /// Israeli tracks often come back transliterated in one language and in
+    /// Hebrew in the other, while LRCLIB may have either.
+    func trackNames(id: String, language: String) async throws -> TrackNames {
+        guard SpotifyTrack.isCatalogID(id) else { throw SpotifyError.badResponse }
+        for _ in 0..<2 {
+            let token = try await auth.validAccessToken()
+            var req = URLRequest(url: URL(string: "https://api.spotify.com/v1/tracks/\(id)")!)
+            req.timeoutInterval = 10
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            req.setValue(language, forHTTPHeaderField: "Accept-Language")
+
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let http = response as? HTTPURLResponse else { throw SpotifyError.badResponse }
+            switch http.statusCode {
+            case 200:
+                let item = try JSONDecoder().decode(CurrentlyPlayingResponse.Item.self, from: data)
+                return TrackNames(language: language,
+                                  title: item.name,
+                                  artists: item.artists?.map(\.name) ?? [],
+                                  album: item.album?.name ?? "")
+            case 401:
+                auth.invalidateAccessToken()
+                continue
             default:
                 throw SpotifyError.http(http.statusCode, String(decoding: data.prefix(200), as: UTF8.self))
             }

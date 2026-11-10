@@ -14,6 +14,9 @@ jobs:
       - name: Show Xcode version
         run: xcodebuild -version
 
+      - name: Generate app icon
+        run: swift scripts/make_icon.swift CarLyrics/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+
       - name: Install XcodeGen
         run: brew install xcodegen
 
@@ -51,6 +54,12 @@ jobs:
               exit 1
             fi
           done
+          # App icon: actool must have compiled it into the app + Info.plist.
+          if ! plutil -extract CFBundleIcons.CFBundlePrimaryIcon json -o - "$APP/Info.plist"; then
+            echo "::error::CFBundleIcons missing from Info.plist (app icon not compiled)"
+            exit 1
+          fi
+          ls "$APP" | grep -i "AppIcon" || { echo "::error::AppIcon*.png missing from the app bundle"; exit 1; }
 
       - name: Package IPA
         run: |
@@ -64,6 +73,12 @@ jobs:
         with:
           name: CarLyrics-ipa
           path: CarLyrics.ipa
+
+      - name: Upload app icon preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: AppIcon-png
+          path: CarLyrics/Assets.xcassets/AppIcon.appiconset/AppIcon.png
 
       - name: Upload build log on failure
         if: failure()

@@ -21,6 +21,10 @@ struct ContentView: View {
                     VStack(spacing: 18) {
                         TestActivitySection()
                         Divider()
+                        MissingLyricsView(entries: model.missingEntries,
+                                          report: model.missingLyricsReport,
+                                          onClear: { model.clearMissingLyrics() })
+                        Divider()
                         diagnosticsButtons
                         DebugLogView(logs: model.logs)
                     }
@@ -127,6 +131,67 @@ struct ContentView: View {
                 .buttonStyle(.bordered)
                 .disabled(!model.isRunning)
         }
+    }
+}
+
+/// Tracks where every LRCLIB attempt failed, with the queries tried.
+struct MissingLyricsView: View {
+    let entries: [MissingLyricsEntry]
+    let report: String
+    let onClear: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Missing lyrics (\(entries.count))").font(.caption.bold()).foregroundStyle(.secondary)
+                Spacer()
+                ShareLink(item: report) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                .disabled(entries.isEmpty)
+                Button("Clear", role: .destructive, action: onClear)
+                    .disabled(entries.isEmpty)
+            }
+            .font(.caption)
+            .buttonStyle(.bordered)
+
+            if entries.isEmpty {
+                Text("No misses yet").font(.caption2).foregroundStyle(.tertiary)
+            }
+            ForEach(entries) { e in
+                DisclosureGroup {
+                    VStack(alignment: .leading, spacing: 3) {
+                        detail("he", e.hebrewNames?.summary ?? "unavailable")
+                        detail("en", e.englishNames?.summary ?? "unavailable")
+                        detail("album", e.album)
+                        detail("duration", "\(e.durationSeconds / 60):\(String(format: "%02d", e.durationSeconds % 60))")
+                        detail("result", e.outcome)
+                        Text("Queries (\(e.queries.count)):")
+                            .font(.caption2.bold()).foregroundStyle(.secondary).padding(.top, 2)
+                        ForEach(Array(e.queries.enumerated()), id: \.offset) { _, q in
+                            Text(q)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .textSelection(.enabled)
+                    .padding(.top, 4)
+                } label: {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(e.title).font(.caption.bold()).lineLimit(1)
+                        Text(e.artist).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func detail(_ key: String, _ value: String) -> some View {
+        (Text(key + ": ").bold() + Text(value))
+            .font(.caption2)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
